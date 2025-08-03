@@ -22,6 +22,7 @@ Feel free to contribute, suggest improvements, report bugs, or just share your e
 
 *Happy trading!* 💎🙌
 
+Contact with me facexyz@tuta.io 
 ---
 
 ## 📋 Table of Contents
