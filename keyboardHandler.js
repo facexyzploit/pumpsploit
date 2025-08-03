@@ -1,4 +1,4 @@
-import { exec, execSync } from 'child_process';
+import { exec, execSync, execFile } from 'child_process';
 import { colors } from './colors.js';
 import inquirer from 'inquirer';
 import path from 'path';
@@ -190,7 +190,7 @@ class KeyboardHandler {
     }
     
     if (tokenAddress) {
-      exec(`open https://gmgn.ai/sol/token/${tokenAddress}`);
+      execFile('open', [`https://gmgn.ai/sol/token/${tokenAddress}`]);
       console.log(`Opening token address: https://gmgn.ai/sol/token/${tokenAddress}`);
     }
   }
