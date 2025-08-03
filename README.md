@@ -14,7 +14,7 @@ I started this project with a vision to create an effective trading tool for mem
 
 **My goal is simple**: Build together a working tool that helps traders navigate the volatile world of memecoins effectively. Whether you're a beginner or an experienced trader, this tool is designed to give you the edge you need.
 
-**Why I'm sharing this**: I believe in the power of community-driven development. By open-sourcing this project, I hope we can all contribute to making it better, more effective, and more reliable for everyone.
+**Why I'm sharing this**: I believe in the power of community-driven development. By open-so urcing this project, I hope we can all contribute to making it better, more effective, and more reliable for everyone.
 
 **Let's build this together!** 🚀
 
