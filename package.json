@@ -1,0 +1,36 @@
+{
+  "name": "pumptool",
+  "version": "2.0.0",
+  "description": "dev",
+  "type": "module",
+  "main": "bitquery-stream.js",
+  "scripts": {
+    "start": "node bitquery-stream.js"
+  },
+  "keywords": [],
+  "author": "facexyzploit",
+  "license": "ISC",
+  "dependencies": {
+    "@project-serum/anchor": "^0.26.0",
+    "@solana/spl-token": "^0.4.13",
+    "boxen": "^8.0.1",
+    "bs58": "^6.0.0",
+    "chalk": "^5.4.1",
+    "cli-chart": "^0.3.1",
+    "cli-progress": "^3.12.0",
+    "cli-table3": "^0.6.5",
+    "clipboardy": "^4.0.0",
+    "cross-fetch": "^4.1.0",
+    "dotenv": "^17.2.1",
+    "express": "^5.1.0",
+    "ink": "^6.0.1",
+    "inquirer": "^12.8.2",
+    "lodash": "^4.17.21",
+    "node-fetch": "^3.3.2",
+    "ora": "^8.2.0",
+    "react": "^19.1.0"
+  },
+  "devDependencies": {
+    "jest": "^30.0.5"
+  }
+}

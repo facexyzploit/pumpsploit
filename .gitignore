@@ -63,7 +63,7 @@ Thumbs.db
 
 # Wallets (SECURITY - Never commit wallet files!)
 wallets/
-*.json
+settings/settings.json
 !package-lock.json
 !tsconfig.json
 
