@@ -7549,7 +7549,8 @@ async function handleEmergencySell(wallet) {
     
     if (!canBeSold) {
       console.log(`${colors.red}❌ Token cannot be sold (no liquidity)${colors.reset}`);
-      console.log(`${colors.yellow}💡 Would you like to burn these tokens instead?${colors.reset}`);
+      console.log(`${colors.yellow}💡 This token has no trading liquidity on Jupiter${colors.reset}`);
+      console.log(`${colors.cyan}💡 Would you like to burn these tokens to free up wallet space?${colors.reset}`);
       
       const { burnInstead } = await inquirer.prompt([
         {
@@ -7589,16 +7590,135 @@ async function handleEmergencySell(wallet) {
       }
     }
 
-    // Get sell quote for 100% of balance
+    // Get sell quote for 100% of balance with progressive slippage for emergency sells
     console.log(`${colors.cyan}📊 Getting sell quote for 100% of tokens...${colors.reset}`);
-    const sellQuote = await getBestQuote(
-      tokenMint,
-      'So11111111111111111111111111111111111111112', // SOL mint
-      tokenBalance
-    );
+    
+    // For emergency sells, use progressive slippage to handle low liquidity tokens
+    let sellQuote;
+    let slippageAttempts = [5, 10, 20, 50]; // Try 5%, 10%, 20%, 50% slippage
+    let successfulSlippage = null;
+    
+    for (const slippage of slippageAttempts) {
+      try {
+        console.log(`${colors.yellow}🔄 Trying with ${slippage}% slippage...${colors.reset}`);
+        
+        // Temporarily override slippage for this quote
+        const originalSlippage = settingsManager.get('slippageLimit');
+        settingsManager.set('slippageLimit', slippage);
+        
+        sellQuote = await getBestQuote(
+          tokenMint,
+          'So11111111111111111111111111111111111111112', // SOL mint
+          tokenBalance
+        );
+        
+        // Restore original slippage
+        settingsManager.set('slippageLimit', originalSlippage);
+        successfulSlippage = slippage;
+        console.log(`${colors.green}✅ Quote obtained with ${slippage}% slippage${colors.reset}`);
+        break;
+        
+      } catch (error) {
+        console.log(`${colors.yellow}⚠️ Failed with ${slippage}% slippage: ${error.message}${colors.reset}`);
+        
+        // Restore original slippage on error
+        const originalSlippage = settingsManager.get('slippageLimit');
+        settingsManager.set('slippageLimit', originalSlippage);
+        
+        if (slippage === 50) {
+          // If even 50% slippage fails, try with smaller amounts
+          console.log(`${colors.yellow}⚠️ Full amount failed, trying with smaller amounts...${colors.reset}`);
+          
+          // Try with 50%, 25%, 10% of the balance
+          const partialAmounts = [0.5, 0.25, 0.1];
+          
+          for (const ratio of partialAmounts) {
+            const partialBalance = Math.floor(tokenBalance * ratio);
+            if (partialBalance <= 0) continue;
+            
+            try {
+              console.log(`${colors.yellow}🔄 Trying to sell ${(ratio * 100).toFixed(0)}% (${partialBalance.toLocaleString()} tokens)...${colors.reset}`);
+              
+              const partialQuote = await getBestQuote(
+                tokenMint,
+                'So11111111111111111111111111111111111111112',
+                partialBalance
+              );
+              
+              sellQuote = partialQuote;
+              successfulSlippage = 50;
+              console.log(`${colors.green}✅ Partial sell quote obtained: ${(ratio * 100).toFixed(0)}% of tokens${colors.reset}`);
+              break;
+              
+            } catch (partialError) {
+              console.log(`${colors.yellow}⚠️ Partial sell failed: ${partialError.message}${colors.reset}`);
+            }
+          }
+          
+          if (!sellQuote) {
+            throw new Error('Token has no liquidity even with partial amounts');
+          }
+          break;
+        }
+      }
+    }
+    
+    if (!successfulSlippage) {
+      console.log(`${colors.red}❌ Token cannot be sold even with high slippage${colors.reset}`);
+      console.log(`${colors.yellow}💡 This token has extremely low or no liquidity${colors.reset}`);
+      console.log(`${colors.cyan}💡 Consider burning the tokens to free up wallet space${colors.reset}`);
+      
+      const { burnInstead } = await inquirer.prompt([
+        {
+          type: 'confirm',
+          name: 'burnInstead',
+          message: 'Burn tokens to free up wallet space?',
+          default: true
+        }
+      ]);
+      
+      if (burnInstead) {
+        console.log(`${colors.red}🔥 Burning tokens instead of selling...${colors.reset}`);
+        
+        // Initialize burn transaction progress monitor
+        const burnProgressMonitor = new TransactionProgressMonitor();
+        burnProgressMonitor.startTransaction('BURN', 'TOKEN', `${tokenBalance.toLocaleString()} tokens`);
+        
+        // Simulate burn transaction steps
+        await burnProgressMonitor.simulateTransactionSteps('BURN', 'TOKEN', `${tokenBalance.toLocaleString()} tokens`);
+        
+        // Perform burn
+        const burnResult = await burnTokens(tokenMint, tokenBalance, wallet);
+        
+        // Complete burn transaction
+        burnProgressMonitor.completeTransaction(true, burnResult.signature);
+        
+        console.log(`${colors.green}✅ Tokens burned successfully!${colors.reset}`);
+        console.log(`${colors.blue}📝 Transaction: ${burnResult.signature}${colors.reset}`);
+        console.log(`${colors.yellow}💡 Wallet space freed up${colors.reset}`);
+        
+        await waitForSpaceKey();
+        return;
+      } else {
+        console.log(`${colors.yellow}⚠️ Emergency sell cancelled${colors.reset}`);
+        await waitForSpaceKey();
+        return;
+      }
+    }
 
     console.log(`${colors.cyan}📊 Emergency Sell Quote:${colors.reset}`);
-    console.log(`${colors.red}🚨 Selling: ${tokenBalance.toLocaleString()} tokens${colors.reset}`);
+    
+    // Check if we're selling a partial amount
+    const actualSellAmount = sellQuote.inAmount;
+    const isPartialSell = actualSellAmount < tokenBalance;
+    
+    if (isPartialSell) {
+      console.log(`${colors.red}🚨 Selling: ${actualSellAmount.toLocaleString()} tokens (${((actualSellAmount / tokenBalance) * 100).toFixed(1)}% of balance)${colors.reset}`);
+      console.log(`${colors.yellow}⚠️ Note: Only partial amount can be sold due to low liquidity${colors.reset}`);
+    } else {
+      console.log(`${colors.red}🚨 Selling: ${actualSellAmount.toLocaleString()} tokens (100%)${colors.reset}`);
+    }
+    
     console.log(`${colors.green}💰 Receiving: ${sellQuote.outAmount / LAMPORTS_PER_SOL} SOL${colors.reset}`);
 
     // Final confirmation
@@ -7606,7 +7726,7 @@ async function handleEmergencySell(wallet) {
       {
         type: 'confirm',
         name: 'confirm',
-        message: `🚨 CONFIRM EMERGENCY SELL: Sell 100% (${tokenBalance.toLocaleString()} tokens) for ${sellQuote.outAmount / LAMPORTS_PER_SOL} SOL?`,
+        message: `🚨 CONFIRM EMERGENCY SELL: Sell ${isPartialSell ? `${((actualSellAmount / tokenBalance) * 100).toFixed(1)}%` : '100%'} (${actualSellAmount.toLocaleString()} tokens) for ${sellQuote.outAmount / LAMPORTS_PER_SOL} SOL?`,
         default: false
       }
     ]);
@@ -7624,12 +7744,13 @@ async function handleEmergencySell(wallet) {
     // Simulate emergency sell transaction steps
     await progressMonitor.simulateTransactionSteps('EMERGENCY_SELL', 'TOKEN', `${tokenBalance.toLocaleString()} tokens`);
     
-    // Perform emergency sell
+    // Perform emergency sell with the same slippage that worked for the quote
     const result = await performSwap(
       tokenMint,
       'So11111111111111111111111111111111111111112',
-      tokenBalance,
-      wallet
+      actualSellAmount, // Use the actual amount that can be sold
+      wallet,
+      successfulSlippage // Use the slippage that worked for the quote
     );
 
     // Complete emergency sell transaction
@@ -7638,6 +7759,12 @@ async function handleEmergencySell(wallet) {
     console.log(`${colors.green}✅ EMERGENCY SELL COMPLETED!${colors.reset}`);
     console.log(`${colors.blue}💰 Received: ${sellQuote.outAmount / LAMPORTS_PER_SOL} SOL${colors.reset}`);
     console.log(`${colors.blue}📝 Transaction: ${result.signature}${colors.reset}`);
+    
+    if (isPartialSell) {
+      const remainingTokens = tokenBalance - actualSellAmount;
+      console.log(`${colors.yellow}⚠️ Remaining tokens: ${remainingTokens.toLocaleString()} (${((remainingTokens / tokenBalance) * 100).toFixed(1)}% of original balance)${colors.reset}`);
+      console.log(`${colors.cyan}💡 Consider burning remaining tokens to free up wallet space${colors.reset}`);
+    }
 
     // Calculate and display profit/loss
     try {
