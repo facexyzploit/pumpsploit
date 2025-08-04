@@ -40,7 +40,9 @@ import {
   burnTokens,
   canTokenBeSold,
   closeTokenAccount,
-  sendToDeadAddress
+  sendToDeadAddress,
+  getQuickTokenDisplay,
+  clearTokenBalanceCache
 } from './modules/jupiter-swap.js';
 import { 
   optimizedRateLimiter, 
@@ -7103,9 +7105,9 @@ async function handleSellToken(wallet) {
   console.log(`${colors.red}🔴 Sell Token Mode${colors.reset}\n`);
 
   try {
-    // Get all token balances
+    // Get all token balances with quick display
     console.log(`${colors.cyan}🔍 Loading your tokens...${colors.reset}`);
-    const tokens = await getAllTokenBalances(wallet.publicKey.toString());
+    const tokens = await getQuickTokenDisplay(wallet.publicKey.toString());
     
     let selectedToken;
     
@@ -7132,59 +7134,17 @@ async function handleSellToken(wallet) {
       selectedToken = 'custom';
     } else {
       
-      // Get token info for choices with real-time data
-      let tokensWithInfo = await Promise.all(
-        tokens.map(async (token) => {
-          const tokenInfo = await getTokenInfo(token.mint);
-          const pnl = await calculateTokenPnL(token.mint, token.balance);
-          return { ...token, ...tokenInfo, pnl };
-        })
-      );
+      // Display tokens with quick info
+      console.log(`${colors.green}📋 Your Tokens:${colors.reset}`);
+      console.log(`${colors.white}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${colors.reset}`);
       
-      // Function to update token data with real-time prices
-      const updateTokenData = async () => {
-        tokensWithInfo = await Promise.all(
-          tokens.map(async (token) => {
-            const tokenInfo = await getTokenInfo(token.mint);
-            const pnl = await calculateTokenPnL(token.mint, token.balance);
-            return { ...token, ...tokenInfo, pnl };
-          })
-        );
-      };
-      
-      // Function to display enhanced token list with real-time data
-      const displayEnhancedTokenList = async () => {
-        console.log(`${colors.green}📋 Your Tokens (Real-time Data):${colors.reset}`);
-        console.log(`${colors.white}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${colors.reset}`);
-        
-        for (let i = 0; i < tokensWithInfo.length; i++) {
-          const token = tokensWithInfo[i];
-          const pnlColor = token.pnl.pnlPercent >= 0 ? colors.green : colors.red;
-          const pnlSymbol = token.pnl.pnlPercent >= 0 ? '📈' : '📉';
-          
-          console.log(`${colors.cyan}${i + 1}.${colors.reset} ${colors.yellow}${token.symbol}${colors.reset} (${token.mint.slice(0, 8)}...${token.mint.slice(-8)})`);
-          console.log(`   💰 Balance: ${token.balance.toLocaleString()}`);
-          console.log(`   💵 Price: $${token.pnl.currentPrice.toFixed(6)}`);
-          console.log(`   💎 Value: $${token.pnl.currentValue.toFixed(2)}`);
-          console.log(`   ${pnlSymbol} PnL: ${pnlColor}$${token.pnl.pnl.toFixed(2)} (${token.pnl.pnlPercent.toFixed(2)}%)${colors.reset}`);
-          
-          // Get Jupiter price for each token
-          try {
-            const jupiterData = await checkJupiterTokenRealtime(token.mint);
-            if (jupiterData && jupiterData.price) {
-              console.log(`   🌌 Jupiter: $${jupiterData.price.toFixed(6)} | Vol: ${jupiterData.volume24h ? `$${jupiterData.volume24h.toLocaleString()}` : 'N/A'}`);
-            }
-          } catch (error) {
-            // Jupiter data not available, skip
-          }
-          console.log('');
-        }
-        
-        console.log(`${colors.cyan}⌨️  Hotkeys: R=Refresh Data | J=Jupiter Prices | SPACE=Continue${colors.reset}`);
-      };
-      
-      // Initial display
-      await displayEnhancedTokenList();
+      for (let i = 0; i < tokens.length; i++) {
+        const token = tokens[i];
+        console.log(`${colors.cyan}${token.index}.${colors.reset} ${token.symbol} (${token.shortMint})`);
+        console.log(`   💰 Balance: ${token.balance.toLocaleString()}`);
+        console.log(`   📝 Name: ${token.name}`);
+        console.log('');
+      }
       
       // Set up hotkey handling for refresh
       const handleRefreshHotkeys = () => {
@@ -7481,9 +7441,9 @@ async function handleEmergencySell(wallet) {
   console.log(`${colors.yellow}⚠️ This will sell 100% of the specified token immediately${colors.reset}\n`);
 
   try {
-    // Get all token balances
+    // Get all token balances with quick display
     console.log(`${colors.cyan}🔍 Loading your tokens...${colors.reset}`);
-    const tokens = await getAllTokenBalances(wallet.publicKey.toString());
+    const tokens = await getQuickTokenDisplay(wallet.publicKey.toString());
     
     let selectedToken;
     let tokenMint;
@@ -7512,28 +7472,16 @@ async function handleEmergencySell(wallet) {
       
       selectedToken = 'custom';
     } else {
-      // Display tokens with real-time data
+      // Display tokens with quick info
       console.log(`${colors.red}🚨 EMERGENCY SELL - Select token to sell 100%:${colors.reset}`);
       console.log(`${colors.white}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${colors.reset}`);
       
       for (let i = 0; i < tokens.length; i++) {
         const token = tokens[i];
-        try {
-          const tokenInfo = await getTokenInfo(token.mint);
-          const pnl = await calculateTokenPnL(token.mint, token.balance);
-          const pnlColor = pnl.pnlPercent >= 0 ? colors.green : colors.red;
-          const pnlSymbol = pnl.pnlPercent >= 0 ? '📈' : '📉';
-          
-          console.log(`${colors.cyan}${i + 1}.${colors.reset} ${colors.yellow}${tokenInfo.symbol}${colors.reset} (${token.mint.slice(0, 8)}...${token.mint.slice(-8)})`);
-          console.log(`   💰 Balance: ${token.balance.toLocaleString()}`);
-          console.log(`   💵 Value: $${pnl.currentValue.toFixed(2)}`);
-          console.log(`   ${pnlSymbol} PnL: ${pnlColor}$${pnl.pnl.toFixed(2)} (${pnl.pnlPercent.toFixed(2)}%)${colors.reset}`);
-          console.log('');
-        } catch (error) {
-          console.log(`${colors.cyan}${i + 1}.${colors.reset} ${colors.yellow}Unknown Token${colors.reset} (${token.mint.slice(0, 8)}...${token.mint.slice(-8)})`);
-          console.log(`   💰 Balance: ${token.balance.toLocaleString()}`);
-          console.log('');
-        }
+        console.log(`${colors.cyan}${token.index}.${colors.reset} ${token.symbol} (${token.shortMint})`);
+        console.log(`   💰 Balance: ${token.balance.toLocaleString()}`);
+        console.log(`   📝 Name: ${token.name}`);
+        console.log('');
       }
       
       const { selectedOption } = await inquirer.prompt([
@@ -7712,9 +7660,9 @@ async function handleBurnTokens(wallet) {
   console.log(`${colors.yellow}⚠️ This will permanently burn tokens to free up wallet space${colors.reset}\n`);
 
   try {
-    // Get all token balances
+    // Get all token balances with quick display
     console.log(`${colors.cyan}🔍 Loading your tokens...${colors.reset}`);
-    const tokens = await getAllTokenBalances(wallet.publicKey.toString());
+    const tokens = await getQuickTokenDisplay(wallet.publicKey.toString());
     
     if (tokens.length === 0) {
       console.log(`${colors.yellow}⚠️ No tokens found in your wallet${colors.reset}`);
@@ -7722,28 +7670,16 @@ async function handleBurnTokens(wallet) {
       return;
     }
 
-    // Display tokens with real-time data
+    // Display tokens with quick info
     console.log(`${colors.red}🔥 BURN TOKENS - Select token to burn:${colors.reset}`);
     console.log(`${colors.white}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${colors.reset}`);
     
     for (let i = 0; i < tokens.length; i++) {
       const token = tokens[i];
-      try {
-        const tokenInfo = await getTokenInfo(token.mint);
-        const pnl = await calculateTokenPnL(token.mint, token.balance);
-        const pnlColor = pnl.pnlPercent >= 0 ? colors.green : colors.red;
-        const pnlSymbol = pnl.pnlPercent >= 0 ? '📈' : '📉';
-        
-        console.log(`${colors.cyan}${i + 1}.${colors.reset} ${colors.yellow}${tokenInfo.symbol}${colors.reset} (${token.mint.slice(0, 8)}...${token.mint.slice(-8)})`);
-        console.log(`   💰 Balance: ${token.balance.toLocaleString()}`);
-        console.log(`   💵 Value: $${pnl.currentValue.toFixed(2)}`);
-        console.log(`   ${pnlSymbol} PnL: ${pnlColor}$${pnl.pnl.toFixed(2)} (${pnl.pnlPercent.toFixed(2)}%)${colors.reset}`);
-        console.log('');
-      } catch (error) {
-        console.log(`${colors.cyan}${i + 1}.${colors.reset} ${colors.yellow}Unknown Token${colors.reset} (${token.mint.slice(0, 8)}...${token.mint.slice(-8)})`);
-        console.log(`   💰 Balance: ${token.balance.toLocaleString()}`);
-        console.log('');
-      }
+      console.log(`${colors.cyan}${token.index}.${colors.reset} ${token.symbol} (${token.shortMint})`);
+      console.log(`   💰 Balance: ${token.balance.toLocaleString()}`);
+      console.log(`   📝 Name: ${token.name}`);
+      console.log('');
     }
     
     const { selectedOption } = await inquirer.prompt([

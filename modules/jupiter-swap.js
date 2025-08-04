@@ -298,13 +298,26 @@ export async function getTokenInfo(mintAddress) {
   }
 }
 
+// Cache for token balances to improve performance
+const tokenBalanceCache = new Map();
+const CACHE_DURATION = 5000; // 5 seconds
+
 /**
- * Get all token balances for a wallet
+ * Get all token balances for a wallet (with caching for performance)
  * @param {string} walletAddress - Wallet address
+ * @param {boolean} forceRefresh - Force refresh cache
  * @returns {Promise<Array>} Array of token balances
  */
-export async function getAllTokenBalances(walletAddress) {
+export async function getAllTokenBalances(walletAddress, forceRefresh = false) {
   try {
+    // Check cache first
+    const cacheKey = walletAddress;
+    const cached = tokenBalanceCache.get(cacheKey);
+    
+    if (!forceRefresh && cached && (Date.now() - cached.timestamp) < CACHE_DURATION) {
+      return cached.data;
+    }
+    
     const connection = new Connection(getRpcEndpoint());
     
     // Get all token accounts
@@ -359,10 +372,72 @@ export async function getAllTokenBalances(walletAddress) {
       }
     }
     
+    // Cache the result
+    tokenBalanceCache.set(cacheKey, {
+      data: tokens,
+      timestamp: Date.now()
+    });
+    
     return tokens;
   } catch (error) {
     console.error(`${colors.red}❌ Error getting all token balances: ${error.message}${colors.reset}`);
     // Return empty array instead of throwing
+    return [];
+  }
+}
+
+/**
+ * Clear token balance cache
+ */
+export function clearTokenBalanceCache() {
+  tokenBalanceCache.clear();
+}
+
+/**
+ * Quick display of tokens with basic info (fast version)
+ * @param {string} walletAddress - Wallet address
+ * @returns {Promise<Array>} Array of tokens with basic info
+ */
+export async function getQuickTokenDisplay(walletAddress) {
+  try {
+    const tokens = await getAllTokenBalances(walletAddress);
+    
+    if (tokens.length === 0) {
+      return [];
+    }
+    
+    // Get basic info for all tokens in parallel
+    const tokensWithInfo = await Promise.all(
+      tokens.map(async (token, index) => {
+        try {
+          // Get basic token info (symbol, name)
+          const tokenInfo = await getTokenInfo(token.mint);
+          
+          return {
+            index: index + 1,
+            mint: token.mint,
+            balance: token.balance,
+            symbol: tokenInfo.symbol || token.mint.slice(0, 8) + '...',
+            name: tokenInfo.name || 'Unknown Token',
+            shortMint: token.mint.slice(0, 8) + '...' + token.mint.slice(-8)
+          };
+        } catch (error) {
+          // Fallback for tokens that can't be fetched
+          return {
+            index: index + 1,
+            mint: token.mint,
+            balance: token.balance,
+            symbol: token.mint.slice(0, 8) + '...',
+            name: 'Unknown Token',
+            shortMint: token.mint.slice(0, 8) + '...' + token.mint.slice(-8)
+          };
+        }
+      })
+    );
+    
+    return tokensWithInfo;
+  } catch (error) {
+    console.error(`${colors.red}❌ Error getting quick token display: ${error.message}${colors.reset}`);
     return [];
   }
 }
