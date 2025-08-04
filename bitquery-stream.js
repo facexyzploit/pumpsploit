@@ -3826,12 +3826,13 @@ async function initializeApp(menuState = MENU_STATES.MAIN) {
         { number: '5', icon: '🔴', name: 'Sell Token', color: colors.red, value: 'quickSell' },
         { number: '6', icon: '🚨', name: 'Emergency Sell', color: colors.red, value: 'emergencySell' },
         { number: '7', icon: '🔥', name: 'Burn Tokens', color: colors.red, value: 'burnTokens' },
-        { number: '8', icon: '📦', name: 'Bundle Trade', color: colors.yellow, value: 'bundle' },
-        { number: '9', icon: '🔔', name: 'Alerts', color: colors.orange, value: 'alerts' },
-        { number: '10', icon: '🌌', name: 'Jupiter', color: colors.green, value: 'jupiter' },
-        { number: '11', icon: '🤖', name: 'AI Tools', color: colors.cyan, value: 'ai_tools' },
-        { number: '12', icon: '🔍', name: 'Check Token', color: colors.purple, value: 'checktoken' },
-        { number: '13', icon: '❓', name: 'Help', color: colors.yellow, value: 'help' },
+        { number: '8', icon: '⚙️', name: 'Advanced Swap', color: colors.cyan, value: 'advancedSwap' },
+        { number: '9', icon: '📦', name: 'Bundle Trade', color: colors.yellow, value: 'bundle' },
+        { number: '10', icon: '🔔', name: 'Alerts', color: colors.orange, value: 'alerts' },
+        { number: '11', icon: '🌌', name: 'Jupiter', color: colors.green, value: 'jupiter' },
+        { number: '12', icon: '🤖', name: 'AI Tools', color: colors.cyan, value: 'ai_tools' },
+        { number: '13', icon: '🔍', name: 'Check Token', color: colors.purple, value: 'checktoken' },
+        { number: '14', icon: '❓', name: 'Help', color: colors.yellow, value: 'help' },
         { number: '0', icon: '❌', name: 'Exit', color: colors.red, value: 'exit' }
       ];
       
@@ -3885,7 +3886,7 @@ async function initializeApp(menuState = MENU_STATES.MAIN) {
           validate: (input) => {
             const num = parseInt(input);
             if (isNaN(num)) return 'Please enter a valid number';
-            if (num < 0 || num > 13) return 'Please enter a number between 0 and 13';
+            if (num < 0 || num > 14) return 'Please enter a number between 0 and 14';
             return true;
           }
         }
@@ -3950,6 +3951,18 @@ async function initializeApp(menuState = MENU_STATES.MAIN) {
         }
         const wallet = loadWallet(walletInfo.name);
         await handleBurnTokens(wallet);
+        return initializeApp(MENU_STATES.MAIN);
+      }
+      if (action === 'advancedSwap') {
+        const walletInfo = await getActiveWalletInfo();
+        if (walletInfo.name === 'None') {
+          console.log(`${colors.red}❌ No active wallet selected${colors.reset}`);
+          console.log(`${colors.cyan}💡 Please select a wallet first${colors.reset}`);
+          await waitForSpaceKey();
+          return initializeApp(MENU_STATES.MAIN);
+        }
+        const wallet = loadWallet(walletInfo.name);
+        await advancedSwapMenu();
         return initializeApp(MENU_STATES.MAIN);
       }
       if (action === 'bundle') {
@@ -6065,6 +6078,7 @@ async function manualSwapMenu() {
           { name: '🟢 Buy Token (SOL → Token)', value: 'buy' },
           { name: '🔴 Sell Token (Token → SOL)', value: 'sell' },
           { name: '🔄 Token to Token', value: 'token' },
+          { name: '⚙️ Advanced Swap (Jupiter.ag Style)', value: 'advanced' },
           { name: '📊 Get Quote Only', value: 'quote' },
           { name: '💰 Check Balances', value: 'balance' },
           { name: '📜 Swap History', value: 'history' }
@@ -6087,6 +6101,9 @@ async function manualSwapMenu() {
       case 'token':
         await handleTokenToToken(wallet);
         break;
+      case 'advanced':
+        await advancedSwapMenu();
+        break;
       case 'quote':
         await handleGetQuote();
         break;
@@ -6101,6 +6118,391 @@ async function manualSwapMenu() {
   } catch (error) {
     console.error(`${colors.red}❌ Error in manual swap menu: ${error.message}${colors.reset}`);
     logToFile(`Manual swap menu error: ${error.message}`, 'error');
+  }
+}
+
+// ADVANCED SWAP MENU (Jupiter.ag style)
+async function advancedSwapMenu() {
+  console.log(`${colors.cyan}🌀 Advanced Swap (Jupiter.ag Style)${colors.reset}`);
+  console.log(`${colors.white}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${colors.reset}\n`);
+
+  try {
+    // Check if wallet is selected
+    if (!settings.activeWallet) {
+      console.log(`${colors.yellow}⚠️ No wallet selected. Please select a wallet first.${colors.reset}`);
+      await waitForSpaceKey();
+      return;
+    }
+
+    const wallet = loadWallet(settings.activeWallet);
+    if (!wallet) {
+      console.log(`${colors.red}❌ Failed to load wallet: ${settings.activeWallet}${colors.reset}`);
+      await waitForSpaceKey();
+      return;
+    }
+
+    // Advanced swap configuration
+    const swapConfig = await getAdvancedSwapConfig(wallet);
+    if (!swapConfig) return; // User cancelled
+
+    // Execute the swap with advanced settings
+    await executeAdvancedSwap(wallet, swapConfig);
+
+  } catch (error) {
+    console.error(`${colors.red}❌ Error in advanced swap menu: ${error.message}${colors.reset}`);
+    logToFile(`Advanced swap menu error: ${error.message}`, 'error');
+  }
+}
+
+// Get advanced swap configuration
+async function getAdvancedSwapConfig(wallet) {
+  console.log(`${colors.cyan}⚙️ Advanced Swap Configuration${colors.reset}\n`);
+
+  try {
+    // 1. Swap Type Selection
+    const { swapType } = await inquirer.prompt([
+      {
+        type: 'list',
+        name: 'swapType',
+        message: '🔄 Select Swap Type:',
+        choices: [
+          { name: '🟢 Buy Token (SOL → Token)', value: 'buy' },
+          { name: '🔴 Sell Token (Token → SOL)', value: 'sell' },
+          { name: '🔄 Token to Token', value: 'token' }
+        ]
+      }
+    ]);
+
+    // 2. Token Selection
+    let fromMint, toMint, amount;
+    
+    if (swapType === 'buy') {
+      fromMint = 'So11111111111111111111111111111111111111112'; // SOL
+      const { tokenMint } = await inquirer.prompt([
+        {
+          type: 'input',
+          name: 'tokenMint',
+          message: '📝 Enter token mint address to buy:',
+          validate: (input) => {
+            if (!input || input.length < 32) return 'Please enter a valid token mint address';
+            return true;
+          }
+        }
+      ]);
+      toMint = tokenMint;
+      
+      const { solAmount } = await inquirer.prompt([
+        {
+          type: 'input',
+          name: 'solAmount',
+          message: '💰 Enter SOL amount to spend:',
+          default: '0.01',
+          validate: (input) => {
+            const num = parseFloat(input);
+            if (isNaN(num) || num <= 0) return 'Please enter a valid amount';
+            return true;
+          }
+        }
+      ]);
+      amount = Math.floor(parseFloat(solAmount) * LAMPORTS_PER_SOL);
+      
+    } else if (swapType === 'sell') {
+      // Get user's tokens
+      const tokens = await getQuickTokenDisplay(wallet.publicKey.toString());
+      if (tokens.length === 0) {
+        console.log(`${colors.yellow}⚠️ No tokens found in wallet${colors.reset}`);
+        await waitForSpaceKey();
+        return null;
+      }
+
+      console.log(`${colors.green}📋 Your Tokens:${colors.reset}`);
+      tokens.forEach((token, index) => {
+        console.log(`${index + 1}. ${token.symbol} (${token.shortMint}) - Balance: ${token.balance.toLocaleString()}`);
+      });
+
+      const { tokenIndex } = await inquirer.prompt([
+        {
+          type: 'list',
+          name: 'tokenIndex',
+          message: 'Select token to sell:',
+          choices: tokens.map((token, index) => ({
+            name: `${index + 1}. ${token.symbol} (${token.shortMint}) - Balance: ${token.balance.toLocaleString()}`,
+            value: index
+          }))
+        }
+      ]);
+
+      const selectedToken = tokens[tokenIndex];
+      fromMint = selectedToken.mint;
+      toMint = 'So11111111111111111111111111111111111111112'; // SOL
+      amount = Math.floor(selectedToken.balance * (10 ** selectedToken.decimals));
+      
+    } else if (swapType === 'token') {
+      const { fromTokenMint } = await inquirer.prompt([
+        {
+          type: 'input',
+          name: 'fromTokenMint',
+          message: '📝 Enter source token mint address:',
+          validate: (input) => {
+            if (!input || input.length < 32) return 'Please enter a valid token mint address';
+            return true;
+          }
+        }
+      ]);
+      
+      const { toTokenMint } = await inquirer.prompt([
+        {
+          type: 'input',
+          name: 'toTokenMint',
+          message: '📝 Enter destination token mint address:',
+          validate: (input) => {
+            if (!input || input.length < 32) return 'Please enter a valid token mint address';
+            return true;
+          }
+        }
+      ]);
+      
+      const { tokenAmount } = await inquirer.prompt([
+        {
+          type: 'input',
+          name: 'tokenAmount',
+          message: '💰 Enter token amount to swap:',
+          validate: (input) => {
+            const num = parseFloat(input);
+            if (isNaN(num) || num <= 0) return 'Please enter a valid amount';
+            return true;
+          }
+        }
+      ]);
+      
+      fromMint = fromTokenMint;
+      toMint = toTokenMint;
+      amount = Math.floor(parseFloat(tokenAmount) * (10 ** 9)); // Assume 9 decimals
+    }
+
+    // 3. Advanced Settings
+    console.log(`\n${colors.cyan}⚙️ Advanced Settings${colors.reset}`);
+    
+    // Max Slippage
+    const { maxSlippage } = await inquirer.prompt([
+      {
+        type: 'list',
+        name: 'maxSlippage',
+        message: '📊 Max Slippage:',
+        choices: [
+          { name: '0.5%', value: 0.5 },
+          { name: '1%', value: 1.0 },
+          { name: '2%', value: 2.0 },
+          { name: '5%', value: 5.0 },
+          { name: '10%', value: 10.0 },
+          { name: 'Custom', value: 'custom' }
+        ]
+      }
+    ]);
+
+    let slippage = maxSlippage;
+    if (maxSlippage === 'custom') {
+      const { customSlippage } = await inquirer.prompt([
+        {
+          type: 'input',
+          name: 'customSlippage',
+          message: '📊 Enter custom slippage (%):',
+          validate: (input) => {
+            const num = parseFloat(input);
+            if (isNaN(num) || num < 0.1 || num > 50) return 'Slippage must be between 0.1% and 50%';
+            return true;
+          }
+        }
+      ]);
+      slippage = parseFloat(customSlippage);
+    }
+
+    // Broadcast Mode
+    const { broadcastMode } = await inquirer.prompt([
+      {
+        type: 'list',
+        name: 'broadcastMode',
+        message: '📡 Broadcast Mode:',
+        choices: [
+          { name: 'Priority Fees', value: 'priority' },
+          { name: 'Jito', value: 'jito' },
+          { name: 'Nozomi', value: 'nozomi' },
+          { name: 'Standard', value: 'standard' }
+        ]
+      }
+    ]);
+
+    // Fee Type
+    const { feeType } = await inquirer.prompt([
+      {
+        type: 'list',
+        name: 'feeType',
+        message: '💰 Fee Type:',
+        choices: [
+          { name: 'Max Cap', value: 'maxcap' },
+          { name: 'Exact Fee', value: 'exact' }
+        ]
+      }
+    ]);
+
+    // Priority Fee
+    const { priorityFee } = await inquirer.prompt([
+      {
+        type: 'input',
+        name: 'priorityFee',
+        message: '⚡ Priority Fee (SOL):',
+        default: '0.001',
+        validate: (input) => {
+          const num = parseFloat(input);
+          if (isNaN(num) || num < 0) return 'Please enter a valid amount';
+          return true;
+        }
+      }
+    ]);
+
+    // Use wSOL
+    const { useWSOL } = await inquirer.prompt([
+      {
+        type: 'confirm',
+        name: 'useWSOL',
+        message: '🔄 Use wSOL (Wrapped SOL)?',
+        default: false
+      }
+    ]);
+
+    // Use Legacy Transaction
+    const { useLegacy } = await inquirer.prompt([
+      {
+        type: 'confirm',
+        name: 'useLegacy',
+        message: '📜 Use Legacy Transaction?',
+        default: false
+      }
+    ]);
+
+    // Ultra V2 Settings
+    const { useUltraV2 } = await inquirer.prompt([
+      {
+        type: 'confirm',
+        name: 'useUltraV2',
+        message: '🚀 Use Jupiter Ultra V2 (recommended)?',
+        default: true
+      }
+    ]);
+
+    // Router Selection
+    const { routerSelection } = await inquirer.prompt([
+      {
+        type: 'list',
+        name: 'routerSelection',
+        message: '🛣️ Router Selection:',
+        choices: [
+          { name: 'Auto (Best Route)', value: 'auto' },
+          { name: 'Jupiter Only', value: 'jupiter' },
+          { name: 'Metis Only', value: 'metis' },
+          { name: 'Hashflow Only', value: 'hashflow' }
+        ]
+      }
+    ]);
+
+    return {
+      swapType,
+      fromMint,
+      toMint,
+      amount,
+      slippage,
+      broadcastMode,
+      feeType,
+      priorityFee: parseFloat(priorityFee),
+      useWSOL,
+      useLegacy,
+      useUltraV2,
+      routerSelection
+    };
+
+  } catch (error) {
+    console.error(`${colors.red}❌ Error getting swap config: ${error.message}${colors.reset}`);
+    return null;
+  }
+}
+
+// Execute advanced swap with configuration
+async function executeAdvancedSwap(wallet, config) {
+  console.log(`\n${colors.cyan}🚀 Executing Advanced Swap${colors.reset}`);
+  console.log(`${colors.white}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${colors.reset}\n`);
+
+  try {
+    // Display configuration
+    console.log(`${colors.yellow}📋 Swap Configuration:${colors.reset}`);
+    console.log(`🔄 Type: ${config.swapType}`);
+    console.log(`📤 From: ${config.fromMint}`);
+    console.log(`📥 To: ${config.toMint}`);
+    console.log(`💰 Amount: ${config.amount}`);
+    console.log(`📊 Slippage: ${config.slippage}%`);
+    console.log(`📡 Broadcast: ${config.broadcastMode}`);
+    console.log(`💰 Fee Type: ${config.feeType}`);
+    console.log(`⚡ Priority Fee: ${config.priorityFee} SOL`);
+    console.log(`🔄 wSOL: ${config.useWSOL ? 'Yes' : 'No'}`);
+    console.log(`📜 Legacy: ${config.useLegacy ? 'Yes' : 'No'}`);
+    console.log(`🚀 Ultra V2: ${config.useUltraV2 ? 'Yes' : 'No'}`);
+    console.log(`🛣️ Router: ${config.routerSelection}\n`);
+
+    // Confirm swap
+    const { confirm } = await inquirer.prompt([
+      {
+        type: 'confirm',
+        name: 'confirm',
+        message: '✅ Confirm this swap?',
+        default: false
+      }
+    ]);
+
+    if (!confirm) {
+      console.log(`${colors.yellow}⚠️ Swap cancelled${colors.reset}`);
+      return;
+    }
+
+    // Execute the swap
+    console.log(`${colors.cyan}🔄 Executing swap...${colors.reset}`);
+    
+    // Update settings temporarily for this swap
+    const originalSettings = {
+      slippageLimit: settings.slippageLimit,
+      priorityFee: settings.priorityFee,
+      enableUltraV2: settings.enableUltraV2
+    };
+
+    settings.slippageLimit = config.slippage;
+    settings.priorityFee = Math.floor(config.priorityFee * LAMPORTS_PER_SOL);
+    settings.enableUltraV2 = config.useUltraV2;
+
+    // Perform the swap
+    const result = await performSwap(
+      config.fromMint,
+      config.toMint,
+      config.amount,
+      wallet,
+      config.slippage,
+      config.useUltraV2
+    );
+
+    // Restore original settings
+    settings.slippageLimit = originalSettings.slippageLimit;
+    settings.priorityFee = originalSettings.priorityFee;
+    settings.enableUltraV2 = originalSettings.enableUltraV2;
+
+    if (result.success) {
+      console.log(`${colors.green}✅ Swap completed successfully!${colors.reset}`);
+      console.log(`${colors.blue}📝 Signature: ${result.signature}${colors.reset}`);
+    } else {
+      console.log(`${colors.red}❌ Swap failed: ${result.error}${colors.reset}`);
+    }
+
+    await waitForSpaceKey();
+
+  } catch (error) {
+    console.error(`${colors.red}❌ Error executing advanced swap: ${error.message}${colors.reset}`);
+    logToFile(`Advanced swap execution error: ${error.message}`, 'error');
   }
 }
 
