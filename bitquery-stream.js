@@ -7208,16 +7208,16 @@ async function handleSellToken(wallet) {
       
       if (hotkeyResult === 'refresh') {
         console.log(`${colors.yellow}🔄 Refreshing token data...${colors.reset}`);
-        await updateTokenData();
-        await displayEnhancedTokenList();
+        // Refresh tokens data
+        const refreshedTokens = await getQuickTokenDisplay(wallet.publicKey.toString());
+        console.log(`${colors.green}✅ Token data refreshed${colors.reset}`);
       } else if (hotkeyResult === 'jupiter') {
-        console.log(`${colors.cyan}🌌 Updating Jupiter prices...${colors.reset}`);
-        await displayEnhancedTokenList();
+        console.log(`${colors.cyan}🌌 Jupiter prices feature not available in this mode${colors.reset}`);
       }
       
       // Create enhanced token choices with real-time data
-      const tokenChoices = tokensWithInfo.map((token, index) => ({
-        name: `${index + 1}. ${token.symbol} (${token.mint.slice(0, 8)}...${token.mint.slice(-8)}) - Balance: ${token.balance.toLocaleString()} - Value: $${token.pnl.currentValue.toFixed(2)}`,
+      const tokenChoices = tokens.map((token, index) => ({
+        name: `${index + 1}. ${token.symbol} (${token.shortMint}) - Balance: ${token.balance.toLocaleString()}`,
         value: token
       }));
 
@@ -7529,14 +7529,12 @@ async function handleEmergencySell(wallet) {
       
       tokenMint = customMint;
       tokenBalance = await getTokenBalance(tokenMint, wallet.publicKey.toString());
-      const tokenMetadata = await getTokenMetadata(tokenMint);
-      tokenDecimals = tokenMetadata.decimals;
+      // tokenDecimals will be retrieved later
     } else {
       // Selected from list
       tokenMint = selectedToken.mint;
       tokenBalance = selectedToken.balance;
-      const tokenMetadata = await getTokenMetadata(tokenMint);
-      tokenDecimals = tokenMetadata.decimals;
+      // tokenDecimals will be retrieved later
     }
 
     console.log(`${colors.blue}💰 Token Balance: ${tokenBalance.toLocaleString()}${colors.reset}`);
@@ -7597,6 +7595,18 @@ async function handleEmergencySell(wallet) {
     // Get sell quote for 100% of balance with progressive slippage for emergency sells
     console.log(`${colors.cyan}📊 Getting sell quote for 100% of tokens...${colors.reset}`);
     
+    // Get token decimals for accurate amount conversion
+    const tokenMetadata = await getTokenMetadata(tokenMint);
+    const tokenDecimals = tokenMetadata.decimals;
+    
+    // Convert the human-readable tokenBalance to atomic units
+    const atomicTokenBalance = Math.floor(tokenBalance * (10 ** tokenDecimals));
+    if (atomicTokenBalance <= 0) {
+      console.log(`${colors.red}❌ Error: Calculated atomic token balance is zero or negative (${tokenBalance} UI amount). Cannot sell.${colors.reset}`);
+      await waitForSpaceKey();
+      return;
+    }
+    
     // For emergency sells, use progressive slippage to handle low liquidity tokens
     let sellQuote;
     let slippageAttempts = [5, 10, 20, 50]; // Try 5%, 10%, 20%, 50% slippage
@@ -7613,7 +7623,7 @@ async function handleEmergencySell(wallet) {
         sellQuote = await getBestQuote(
           tokenMint,
           'So11111111111111111111111111111111111111112', // SOL mint
-          tokenBalance
+          atomicTokenBalance // Use atomic amount
         );
         
         // Restore original slippage
@@ -7640,13 +7650,20 @@ async function handleEmergencySell(wallet) {
             const partialBalance = Math.floor(tokenBalance * ratio);
             if (partialBalance <= 0) continue;
             
+            // Convert partialBalance to atomic units
+            const atomicPartialBalance = Math.floor(partialBalance * (10 ** tokenDecimals));
+            if (atomicPartialBalance <= 0) {
+              console.log(`${colors.yellow}⚠️ Skipping ${(ratio * 100).toFixed(0)}% sell: Calculated atomic amount is zero or negative.${colors.reset}`);
+              continue;
+            }
+            
             try {
               console.log(`${colors.yellow}🔄 Trying to sell ${(ratio * 100).toFixed(0)}% (${partialBalance.toLocaleString()} tokens)...${colors.reset}`);
               
               const partialQuote = await getBestQuote(
                 tokenMint,
                 'So11111111111111111111111111111111111111112',
-                partialBalance
+                atomicPartialBalance // Use atomic amount
               );
               
               sellQuote = partialQuote;
@@ -7748,11 +7765,14 @@ async function handleEmergencySell(wallet) {
     // Simulate emergency sell transaction steps
     await progressMonitor.simulateTransactionSteps('EMERGENCY_SELL', 'TOKEN', `${tokenBalance.toLocaleString()} tokens`);
     
+    // Convert actualSellAmount to atomic units for the swap
+    const atomicSellAmount = Math.floor(actualSellAmount * (10 ** tokenDecimals));
+    
     // Perform emergency sell with the same slippage that worked for the quote
     const result = await performSwap(
       tokenMint,
       'So11111111111111111111111111111111111111112',
-      actualSellAmount, // Use the actual amount that can be sold
+      atomicSellAmount, // Use atomic amount for the swap
       wallet,
       successfulSlippage // Use the slippage that worked for the quote
     );
