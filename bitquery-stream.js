@@ -1838,14 +1838,25 @@ async function showRpcSettingsMenu() {
         console.log(`${colors.cyan}Tip Amount:${colors.reset} ${settings.tipAmount || 0.001} SOL`);
         console.log(`\n${colors.yellow}Press Enter to continue...${colors.reset}`);
         await new Promise(resolve => {
-          const rl = require('readline').createInterface({
-            input: process.stdin,
-            output: process.stdout
-          });
-          rl.question('', () => {
-            rl.close();
-            resolve();
-          });
+          const originalRawMode = process.stdin.isRaw;
+          const originalEncoding = process.stdin.encoding;
+          
+          process.stdin.setRawMode(true);
+          process.stdin.resume();
+          process.stdin.setEncoding('utf8');
+          
+          const onData = (data) => {
+            if (data === '\r' || data === '\n') {
+              process.stdin.setRawMode(false);
+              process.stdin.pause();
+              process.stdin.setRawMode(originalRawMode);
+              process.stdin.setEncoding(originalEncoding);
+              process.stdin.removeListener('data', onData);
+              resolve();
+            }
+          };
+          
+          process.stdin.on('data', onData);
         });
         break;
       }

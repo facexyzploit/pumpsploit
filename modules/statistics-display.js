@@ -1,4 +1,5 @@
 import { colors } from '../colors.js';
+import * as fs from 'fs';
 
 // Enhanced statistics display
 export class StatisticsDisplay {
@@ -292,7 +293,6 @@ export class StatisticsDisplay {
 
   // Export statistics to file
   exportStats(filename = 'statistics.json') {
-    const fs = require('fs');
     const data = {
       timestamp: new Date().toISOString(),
       statistics: this.stats,
