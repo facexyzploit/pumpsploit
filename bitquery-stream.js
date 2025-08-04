@@ -7452,7 +7452,6 @@ async function handleEmergencySell(wallet) {
     let selectedToken;
     let tokenMint;
     let tokenBalance;
-    let tokenDecimals;
     
     if (tokens.length === 0) {
       console.log(`${colors.yellow}⚠️ No tokens found in your wallet${colors.reset}`);
