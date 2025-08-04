@@ -6,6 +6,18 @@
 
 > **Advanced AI-powered trading and analysis tool for Solana blockchain with real-time pump detection, automated trading, and comprehensive market analytics.**
 
+## 📋 Latest Updates
+
+> **📖 [Read Latest Updates](LATEST_UPDATES.md) - Complete changelog with new features, optimizations, and improvements in English and Russian**
+
+**🔥 New in v2.0.0:**
+- Token burning system with multiple methods
+- Optimized token display with caching (70% faster)
+- Emergency sell integration in buy process
+- Enhanced error handling and fallbacks
+- ES module compatibility fixes
+- Performance optimizations (60-80% faster operations)
+
 ## 💬 Message from Developer
 
 Hey everyone! 👋
