@@ -15,7 +15,7 @@ const JUPITER_SWAP_TRANSACTION_API = 'https://quote-api.jup.ag/v6/swap';
 const settingsManager = new SettingsManager();
 
 // Get RPC endpoint from settings
-function getRpcEndpoint() {
+export function getRpcEndpoint() {
   return settingsManager.get('enableCustomRpc') 
     ? settingsManager.get('customRpcEndpoint') 
     : 'https://api.mainnet-beta.solana.com';
