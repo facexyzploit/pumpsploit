@@ -44,6 +44,7 @@ import {
   getQuickTokenDisplay,
   clearTokenBalanceCache
 } from './modules/jupiter-swap.js';
+import { SettingsManager } from './modules/settings-manager.js';
 import { 
   optimizedRateLimiter, 
   CacheManager, 
@@ -59,6 +60,9 @@ import { OptimizedAppState } from './state.js';
 const performanceMonitor = new PerformanceMonitor();
 const cacheManager = new CacheManager();
 const optimizedDisplay = new OptimizedDisplay();
+
+// Initialize settings manager
+const settingsManager = new SettingsManager();
 
 // Replace state initialization
 let appState = new OptimizedAppState();
