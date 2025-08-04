@@ -6142,7 +6142,7 @@ async function advancedSwapMenu() {
     }
 
     // Advanced swap configuration
-    const swapConfig = await getAdvancedSwapConfig(wallet);
+    const swapConfig = await getAdvancedSwapConfig();
     if (!swapConfig) return; // User cancelled
 
     // Execute the swap with advanced settings
@@ -6155,7 +6155,7 @@ async function advancedSwapMenu() {
 }
 
 // Get advanced swap configuration
-async function getAdvancedSwapConfig(wallet) {
+async function getAdvancedSwapConfig() {
   console.log(`${colors.cyan}⚙️ Advanced Swap Configuration${colors.reset}\n`);
 
   try {
@@ -6207,7 +6207,14 @@ async function getAdvancedSwapConfig(wallet) {
       amount = Math.floor(parseFloat(solAmount) * LAMPORTS_PER_SOL);
       
     } else if (swapType === 'sell') {
-      // Get user's tokens
+      // Get user's tokens - we need to get wallet info first
+      const walletInfo = await getActiveWalletInfo();
+      if (walletInfo.name === 'None') {
+        console.log(`${colors.red}❌ No active wallet selected${colors.reset}`);
+        await waitForSpaceKey();
+        return null;
+      }
+      const wallet = loadWallet(walletInfo.name);
       const tokens = await getQuickTokenDisplay(wallet.publicKey.toString());
       if (tokens.length === 0) {
         console.log(`${colors.yellow}⚠️ No tokens found in wallet${colors.reset}`);
@@ -6404,6 +6411,12 @@ async function getAdvancedSwapConfig(wallet) {
         ]
       }
     ]);
+
+    // Validate amount
+    if (isNaN(amount) || amount <= 0) {
+      console.log(`${colors.red}❌ Invalid amount: ${amount}${colors.reset}`);
+      return null;
+    }
 
     return {
       swapType,
