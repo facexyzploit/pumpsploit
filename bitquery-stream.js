@@ -1594,9 +1594,9 @@ let settings = {
   // RPC Settings for Buy/Sell
   customRpcEndpoint: 'https://api.mainnet-beta.solana.com',
   enableCustomRpc: false,
-  priorityFee: 5000,
+  priorityFee: 1000, // Reduced from 5000 to 1000 micro-lamports
   slippageLimit: 0.5,
-  tipAmount: 0.001
+  tipAmount: 0.0001 // Reduced from 0.001 to 0.0001 SOL
 };
 function loadSettings() {
   if (fs.existsSync(settingsFile)) {
@@ -1763,7 +1763,7 @@ async function showRpcSettingsMenu() {
             type: 'input',
             name: 'priorityFee',
             message: 'Priority fee (micro-lamports):',
-            default: settings.priorityFee || 5000,
+            default: settings.priorityFee || 1000,
             validate: (input) => {
               const num = parseInt(input);
               if (isNaN(num)) return 'Please enter a valid number';
@@ -1843,9 +1843,9 @@ async function showRpcSettingsMenu() {
         console.log(`${'─'.repeat(50)}`);
         console.log(`${colors.cyan}Custom RPC Endpoint:${colors.reset} ${settings.customRpcEndpoint || 'https://api.mainnet-beta.solana.com'}`);
         console.log(`${colors.cyan}Enable Custom RPC:${colors.reset} ${settings.enableCustomRpc ? 'Yes' : 'No'}`);
-        console.log(`${colors.cyan}Priority Fee:${colors.reset} ${settings.priorityFee || 5000} micro-lamports`);
+        console.log(`${colors.cyan}Priority Fee:${colors.reset} ${settings.priorityFee || 1000} micro-lamports`);
         console.log(`${colors.cyan}Slippage Limit:${colors.reset} ${settings.slippageLimit || 0.5}%`);
-        console.log(`${colors.cyan}Tip Amount:${colors.reset} ${settings.tipAmount || 0.001} SOL`);
+        console.log(`${colors.cyan}Tip Amount:${colors.reset} ${settings.tipAmount || 0.0001} SOL`);
         console.log(`\n${colors.yellow}Press Enter to continue...${colors.reset}`);
         await new Promise(resolve => {
           const originalRawMode = process.stdin.isRaw;
@@ -7764,17 +7764,67 @@ async function handleEmergencySell(wallet) {
     // Simulate emergency sell transaction steps
     await progressMonitor.simulateTransactionSteps('EMERGENCY_SELL', 'TOKEN', `${tokenBalance.toLocaleString()} tokens`);
     
+    // Check SOL balance for transaction fees
+    const solBalance = await getSolBalance(wallet.publicKey.toString());
+    const minSolForFees = 0.001; // Minimum SOL needed for fees (reduced from 0.01)
+    
+    if (solBalance < minSolForFees) {
+      console.log(`${colors.red}❌ Insufficient SOL balance for transaction fees${colors.reset}`);
+      console.log(`${colors.yellow}💰 Current SOL balance: ${solBalance} SOL${colors.reset}`);
+      console.log(`${colors.yellow}💡 Minimum required: ${minSolForFees} SOL${colors.reset}`);
+      console.log(`${colors.cyan}💡 Please add more SOL to your wallet and try again${colors.reset}`);
+      await waitForSpaceKey();
+      return;
+    }
+    
     // Convert actualSellAmount to atomic units for the swap
     const atomicSellAmount = Math.floor(actualSellAmount * (10 ** tokenDecimals));
     
-    // Perform emergency sell with the same slippage that worked for the quote
-    const result = await performSwap(
-      tokenMint,
-      'So11111111111111111111111111111111111111112',
-      atomicSellAmount, // Use atomic amount for the swap
-      wallet,
-      successfulSlippage // Use the slippage that worked for the quote
-    );
+    // Perform emergency sell with retry logic
+    let result;
+    let retryCount = 0;
+    const maxRetries = 3;
+    
+    while (retryCount < maxRetries) {
+      try {
+        console.log(`${colors.yellow}🔄 Attempt ${retryCount + 1}/${maxRetries}...${colors.reset}`);
+        
+        // Get fresh quote for each attempt
+        if (retryCount > 0) {
+          console.log(`${colors.cyan}📊 Getting fresh quote for retry...${colors.reset}`);
+          const freshQuote = await getBestQuote(
+            tokenMint,
+            'So11111111111111111111111111111111111111112',
+            atomicSellAmount
+          );
+          console.log(`${colors.green}✅ Fresh quote obtained${colors.reset}`);
+        }
+        
+        result = await performSwap(
+          tokenMint,
+          'So11111111111111111111111111111111111111112',
+          atomicSellAmount, // Use atomic amount for the swap
+          wallet,
+          successfulSlippage // Use the slippage that worked for the quote
+        );
+        
+        console.log(`${colors.green}✅ Swap completed successfully on attempt ${retryCount + 1}${colors.reset}`);
+        break;
+        
+      } catch (error) {
+        retryCount++;
+        console.log(`${colors.yellow}⚠️ Attempt ${retryCount} failed: ${error.message}${colors.reset}`);
+        
+        if (retryCount >= maxRetries) {
+          console.log(`${colors.red}❌ All ${maxRetries} attempts failed${colors.reset}`);
+          throw error;
+        }
+        
+        // Wait before retry
+        console.log(`${colors.cyan}⏳ Waiting 2 seconds before retry...${colors.reset}`);
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      }
+    }
 
     // Complete emergency sell transaction
     progressMonitor.completeTransaction(true, result.signature);

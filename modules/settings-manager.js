@@ -42,8 +42,8 @@ export class SettingsManager {
       // New trading settings
       customRpcEndpoint: 'https://api.mainnet-beta.solana.com',
       slippageLimit: 0.5,
-      priorityFee: 5000,
-      tipAmount: 0.001,
+      priorityFee: 1000, // Reduced from 5000 to 1000 micro-lamports
+      tipAmount: 0.0001, // Reduced from 0.001 to 0.0001 SOL
       enableCustomRpc: false
     };
   }
