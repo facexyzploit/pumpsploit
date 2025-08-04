@@ -15,7 +15,7 @@ import { logToFile } from './logger.js';
 import { colors } from './colors.js';
 import { createKeyboardHandler } from './keyboardHandler.js';
 import { rateLimiter, LoadingSpinner } from './utils.js';
-import { Keypair, Connection, LAMPORTS_PER_SOL } from '@solana/web3.js';
+import { Keypair, Connection, LAMPORTS_PER_SOL, PublicKey } from '@solana/web3.js';
 import bs58 from 'bs58';
 import cliProgress from 'cli-progress';
 import { pumpfunCrossMarketQuery, pumpTradesQuery, monitoringMoreQuery, graduatedQuery, fallbackQuery } from './queries.js';
@@ -42,7 +42,8 @@ import {
   closeTokenAccount,
   sendToDeadAddress,
   getQuickTokenDisplay,
-  clearTokenBalanceCache
+  clearTokenBalanceCache,
+  getRpcEndpoint
 } from './modules/jupiter-swap.js';
 import { SettingsManager } from './modules/settings-manager.js';
 import { 
@@ -7780,6 +7781,24 @@ async function handleEmergencySell(wallet) {
     // Convert actualSellAmount to atomic units for the swap
     const atomicSellAmount = Math.floor(actualSellAmount * (10 ** tokenDecimals));
     
+    // Auto-detect optimal priority fee for emergency sell
+    let optimalPriorityFee = 1000; // Default
+    try {
+      const connection = new Connection(getRpcEndpoint());
+      const recentPrioritizationFees = await connection.getRecentPrioritizationFees([
+        new PublicKey('JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4') // Jupiter program
+      ]);
+      
+      if (recentPrioritizationFees.length > 0) {
+        // Use the minimum effective fee
+        const minEffectiveFee = Math.min(...recentPrioritizationFees.map(fee => fee.prioritizationFee));
+        optimalPriorityFee = Math.max(minEffectiveFee, 100); // Minimum 100 micro-lamports
+        console.log(`${colors.cyan}🔍 Auto-detected optimal priority fee: ${optimalPriorityFee} micro-lamports${colors.reset}`);
+      }
+    } catch (error) {
+      console.log(`${colors.yellow}⚠️ Using default priority fee: ${optimalPriorityFee} micro-lamports${colors.reset}`);
+    }
+    
     // Perform emergency sell with retry logic
     let result;
     let retryCount = 0;
@@ -7800,6 +7819,10 @@ async function handleEmergencySell(wallet) {
           console.log(`${colors.green}✅ Fresh quote obtained${colors.reset}`);
         }
         
+        // Temporarily set optimal priority fee for this transaction
+        const originalPriorityFee = settingsManager.get('priorityFee');
+        settingsManager.set('priorityFee', optimalPriorityFee);
+        
         result = await performSwap(
           tokenMint,
           'So11111111111111111111111111111111111111112',
@@ -7807,6 +7830,9 @@ async function handleEmergencySell(wallet) {
           wallet,
           successfulSlippage // Use the slippage that worked for the quote
         );
+        
+        // Restore original priority fee
+        settingsManager.set('priorityFee', originalPriorityFee);
         
         console.log(`${colors.green}✅ Swap completed successfully on attempt ${retryCount + 1}${colors.reset}`);
         break;

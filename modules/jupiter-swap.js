@@ -135,8 +135,28 @@ export async function performSwap(fromMint, toMint, amount, wallet, slippage = n
     
     // Get settings
     const slippageLimit = slippage !== null ? slippage : settingsManager.get('slippageLimit') || 0.5;
-    const priorityFee = settingsManager.get('priorityFee') || 5000;
-    const tipAmount = settingsManager.get('tipAmount') || 0.001;
+    
+    // Auto-detect minimum priority fee
+    let priorityFee = settingsManager.get('priorityFee') || 1000;
+    try {
+      const connection = new Connection(getRpcEndpoint());
+      const recentPrioritizationFees = await connection.getRecentPrioritizationFees([
+        new PublicKey('JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4') // Jupiter program
+      ]);
+      
+      if (recentPrioritizationFees.length > 0) {
+        // Get the minimum fee that's still effective
+        const minEffectiveFee = Math.min(...recentPrioritizationFees.map(fee => fee.prioritizationFee));
+        priorityFee = Math.max(minEffectiveFee, 100); // Minimum 100 micro-lamports
+        console.log(`${colors.cyan}🔍 Auto-detected priority fee: ${priorityFee} micro-lamports${colors.reset}`);
+      } else {
+        console.log(`${colors.yellow}⚠️ Using default priority fee: ${priorityFee} micro-lamports${colors.reset}`);
+      }
+    } catch (error) {
+      console.log(`${colors.yellow}⚠️ Could not auto-detect priority fee, using default: ${priorityFee} micro-lamports${colors.reset}`);
+    }
+    
+    const tipAmount = settingsManager.get('tipAmount') || 0.0001;
     const rpcEndpoint = getRpcEndpoint();
     
     console.log(`${colors.yellow}Slippage: ${slippageLimit}%${colors.reset}`);
