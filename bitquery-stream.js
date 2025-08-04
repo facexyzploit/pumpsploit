@@ -7607,9 +7607,53 @@ async function handleEmergencySell(wallet) {
       return;
     }
     
+    // Check if the amount is too small for a meaningful transaction
+    const minTransactionAmount = 1000; // Minimum tokens for transaction
+    if (tokenBalance < minTransactionAmount) {
+      console.log(`${colors.yellow}⚠️ Token balance (${tokenBalance}) is too small for a meaningful transaction${colors.reset}`);
+      console.log(`${colors.cyan}💡 Consider burning these tokens instead${colors.reset}`);
+      
+      const { burnInstead } = await inquirer.prompt([
+        {
+          type: 'confirm',
+          name: 'burnInstead',
+          message: 'Burn tokens to free up wallet space?',
+          default: true
+        }
+      ]);
+      
+      if (burnInstead) {
+        console.log(`${colors.red}🔥 Burning tokens instead of selling...${colors.reset}`);
+        
+        // Initialize burn transaction progress monitor
+        const burnProgressMonitor = new TransactionProgressMonitor();
+        burnProgressMonitor.startTransaction('BURN', 'TOKEN', `${tokenBalance.toLocaleString()} tokens`);
+        
+        // Simulate burn transaction steps
+        await burnProgressMonitor.simulateTransactionSteps('BURN', 'TOKEN', `${tokenBalance.toLocaleString()} tokens`);
+        
+        // Perform burn
+        const burnResult = await burnTokens(tokenMint, tokenBalance, wallet);
+        
+        // Complete burn transaction
+        burnProgressMonitor.completeTransaction(true, burnResult.signature);
+        
+        console.log(`${colors.green}✅ Tokens burned successfully!${colors.reset}`);
+        console.log(`${colors.blue}📝 Transaction: ${burnResult.signature}${colors.reset}`);
+        console.log(`${colors.yellow}💡 Wallet space freed up${colors.reset}`);
+        
+        await waitForSpaceKey();
+        return;
+      } else {
+        console.log(`${colors.yellow}⚠️ Emergency sell cancelled${colors.reset}`);
+        await waitForSpaceKey();
+        return;
+      }
+    }
+    
     // For emergency sells, use progressive slippage to handle low liquidity tokens
     let sellQuote;
-    let slippageAttempts = [5, 10, 20, 50]; // Try 5%, 10%, 20%, 50% slippage
+    let slippageAttempts = [10, 20, 50, 100]; // Higher slippage attempts for emergency sells
     let successfulSlippage = null;
     
     for (const slippage of slippageAttempts) {
@@ -7767,7 +7811,7 @@ async function handleEmergencySell(wallet) {
     
     // Check SOL balance for transaction fees
     const solBalance = await getSolBalance(wallet.publicKey.toString());
-    const minSolForFees = 0.001; // Minimum SOL needed for fees (reduced from 0.01)
+    const minSolForFees = 0.005; // Increased minimum SOL for fees
     
     if (solBalance < minSolForFees) {
       console.log(`${colors.red}❌ Insufficient SOL balance for transaction fees${colors.reset}`);
@@ -7782,7 +7826,7 @@ async function handleEmergencySell(wallet) {
     const atomicSellAmount = Math.floor(actualSellAmount * (10 ** tokenDecimals));
     
     // Auto-detect optimal priority fee for emergency sell
-    let optimalPriorityFee = 1000; // Default
+    let optimalPriorityFee = 5000; // Higher default for emergency sells
     try {
       const connection = new Connection(getRpcEndpoint());
       const recentPrioritizationFees = await connection.getRecentPrioritizationFees([
@@ -7790,9 +7834,9 @@ async function handleEmergencySell(wallet) {
       ]);
       
       if (recentPrioritizationFees.length > 0) {
-        // Use the minimum effective fee
-        const minEffectiveFee = Math.min(...recentPrioritizationFees.map(fee => fee.prioritizationFee));
-        optimalPriorityFee = Math.max(minEffectiveFee, 100); // Minimum 100 micro-lamports
+        // Use a higher fee for emergency sells to ensure success
+        const avgFee = recentPrioritizationFees.reduce((sum, fee) => sum + fee.prioritizationFee, 0) / recentPrioritizationFees.length;
+        optimalPriorityFee = Math.max(avgFee * 1.5, 2000); // 1.5x average fee, minimum 2000
         console.log(`${colors.cyan}🔍 Auto-detected optimal priority fee: ${optimalPriorityFee} micro-lamports${colors.reset}`);
       }
     } catch (error) {

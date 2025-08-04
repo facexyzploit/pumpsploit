@@ -9,7 +9,7 @@ import { SettingsManager } from './settings-manager.js';
 // Jupiter API endpoints
 const JUPITER_QUOTE_API = 'https://quote-api.jup.ag/v6/quote';
 const JUPITER_SWAP_API = 'https://quote-api.jup.ag/v6/swap';
-const JUPITER_SWAP_TRANSACTION_API = 'https://quote-api.jup.ag/v6/swap';
+const JUPITER_SWAP_TRANSACTION_API = 'https://lite-api.jup.ag/swap/v1/swap';
 
 // Settings manager
 const settingsManager = new SettingsManager();
@@ -42,7 +42,10 @@ export async function getBestQuote(fromMint, toMint, amount) {
       amount: amount.toString(),
       slippageBps: slippageBps.toString(),
       onlyDirectRoutes: 'false',
-      asLegacyTransaction: 'false'
+      asLegacyTransaction: 'false',
+      // v6 specific parameters
+      maxAccounts: '64',
+      maxSplit: '3'
     });
 
     const response = await fetch(`${JUPITER_QUOTE_API}?${params}`, {
@@ -86,15 +89,25 @@ export async function getSwapTransaction(route, userPublicKey) {
   try {
     console.log(`${colors.cyan}🔧 Building swap transaction...${colors.reset}`);
     
+    // Get priority fee for the transaction
+    const priorityFee = settingsManager.get('priorityFee') || 1000;
+    
     const response = await fetch(JUPITER_SWAP_TRANSACTION_API, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        'Accept': 'application/json'
       },
       body: JSON.stringify({
-        quoteResponse: route,
         userPublicKey: userPublicKey,
-        wrapUnwrapSOL: true
+        quoteResponse: route,
+        prioritizationFeeLamports: {
+          priorityLevelWithMaxLamports: {
+            maxLamports: priorityFee * 1000, // Convert to lamports
+            priorityLevel: "veryHigh"
+          }
+        },
+        dynamicComputeUnitLimit: true
       })
     });
 
@@ -136,8 +149,8 @@ export async function performSwap(fromMint, toMint, amount, wallet, slippage = n
     // Get settings
     const slippageLimit = slippage !== null ? slippage : settingsManager.get('slippageLimit') || 0.5;
     
-    // Auto-detect minimum priority fee
-    let priorityFee = settingsManager.get('priorityFee') || 1000;
+    // Use higher priority fee for better transaction success
+    let priorityFee = settingsManager.get('priorityFee') || 5000; // Higher default for Lite API
     try {
       const connection = new Connection(getRpcEndpoint());
       const recentPrioritizationFees = await connection.getRecentPrioritizationFees([
@@ -145,9 +158,9 @@ export async function performSwap(fromMint, toMint, amount, wallet, slippage = n
       ]);
       
       if (recentPrioritizationFees.length > 0) {
-        // Get the minimum fee that's still effective
-        const minEffectiveFee = Math.min(...recentPrioritizationFees.map(fee => fee.prioritizationFee));
-        priorityFee = Math.max(minEffectiveFee, 100); // Minimum 100 micro-lamports
+        // Use higher fee for better success rate with Lite API
+        const avgFee = recentPrioritizationFees.reduce((sum, fee) => sum + fee.prioritizationFee, 0) / recentPrioritizationFees.length;
+        priorityFee = Math.max(avgFee * 2, 2000); // 2x average fee, minimum 2000
         console.log(`${colors.cyan}🔍 Auto-detected priority fee: ${priorityFee} micro-lamports${colors.reset}`);
       } else {
         console.log(`${colors.yellow}⚠️ Using default priority fee: ${priorityFee} micro-lamports${colors.reset}`);
@@ -176,16 +189,18 @@ export async function performSwap(fromMint, toMint, amount, wallet, slippage = n
     // Decode transaction - handle both legacy and versioned transactions
     let transaction;
     try {
-      // Try versioned transaction first
+      // Try versioned transaction first (v6 uses versioned transactions)
       transaction = VersionedTransaction.deserialize(Buffer.from(swapData.swapTransaction, 'base64'));
       
       // Sign versioned transaction - wallet is the keypair itself
       transaction.sign([wallet]);
       
-      // Send versioned transaction
+      // Send versioned transaction with v6 optimized settings
       const signature = await connection.sendTransaction(transaction, {
         skipPreflight: false,
-        preflightCommitment: 'confirmed'
+        preflightCommitment: 'confirmed',
+        maxRetries: 3,
+        minContextSlot: await connection.getSlot()
       });
       
       console.log(`${colors.green}✅ Swap transaction sent!${colors.reset}`);
@@ -215,10 +230,11 @@ export async function performSwap(fromMint, toMint, amount, wallet, slippage = n
         // Sign legacy transaction - wallet is the keypair itself
         transaction.sign(wallet);
         
-        // Send legacy transaction
+        // Send legacy transaction (fallback for v6)
         const signature = await connection.sendRawTransaction(transaction.serialize(), {
           skipPreflight: false,
-          preflightCommitment: 'confirmed'
+          preflightCommitment: 'confirmed',
+          maxRetries: 3
         });
         
         console.log(`${colors.green}✅ Swap transaction sent!${colors.reset}`);
