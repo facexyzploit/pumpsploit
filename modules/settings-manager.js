@@ -88,6 +88,7 @@ export class SettingsManager {
             { name: '📊 Slippage Limit', value: 'slippage' },
             { name: '⚡ Priority Fee', value: 'priorityFee' },
             { name: '💸 Tip Amount', value: 'tipAmount' },
+            { name: '🚀 Jupiter Ultra V2', value: 'ultraV2' },
             { name: '⏱️ Jupiter Realtime Interval', value: 'jupiterInterval' },
             { name: '📊 Max Tokens to Display', value: 'maxTokens' },
             { name: '🔄 Auto Refresh Interval', value: 'autoRefresh' },
@@ -211,6 +212,21 @@ export class SettingsManager {
           this.settings.tipAmount = tipAmount;
           this.saveSettings();
           console.log(chalk.green(`Tip amount set to ${tipAmount} SOL.`));
+          break;
+        }
+        
+        case 'ultraV2': {
+          const { enableUltraV2 } = await inquirer.prompt([
+            {
+              type: 'confirm',
+              name: 'enableUltraV2',
+              message: 'Enable Jupiter Ultra V2 for better transaction success rate?',
+              default: this.settings.enableUltraV2 !== false
+            }
+          ]);
+          this.settings.enableUltraV2 = enableUltraV2;
+          this.saveSettings();
+          console.log(chalk.green(`Jupiter Ultra V2 ${enableUltraV2 ? 'enabled' : 'disabled'}.`));
           break;
         }
         

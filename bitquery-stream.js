@@ -43,7 +43,8 @@ import {
   sendToDeadAddress,
   getQuickTokenDisplay,
   clearTokenBalanceCache,
-  getRpcEndpoint
+  getRpcEndpoint,
+  performLiteSwap
 } from './modules/jupiter-swap.js';
 import { SettingsManager } from './modules/settings-manager.js';
 import { 
@@ -1660,6 +1661,7 @@ async function showSettingsMenu() {
           { name: 'Set Chart Max Points', value: 'chartMax' },
           { name: 'Toggle Colored Output', value: 'color' },
           { name: '🌐 RPC Settings for Buy/Sell', value: 'rpcSettings' },
+          { name: '⚙️ Advanced Swap Settings', value: 'advancedSwapSettings' },
           { name: '📡 System Status', value: 'systemStatus' }
         ])
       }
@@ -1706,6 +1708,235 @@ async function showSettingsMenu() {
         await connectionStatusMenu();
         break;
       }
+      case 'advancedSwapSettings': {
+        await showAdvancedSwapSettingsMenu();
+        break;
+      }
+      case 'back':
+        exit = true;
+        break;
+        
+      case 'exit':
+        exit = true;
+        break;
+    }
+  }
+}
+
+// Advanced Swap Settings Menu
+async function showAdvancedSwapSettingsMenu() {
+  console.log(`${colors.cyan}⚙️ Advanced Swap Settings${colors.reset}`);
+  console.log(`${colors.white}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${colors.reset}\n`);
+
+  let exit = false;
+  while (!exit) {
+    const { setting } = await inquirer.prompt([
+      {
+        type: 'list',
+        name: 'setting',
+        message: 'Advanced Swap Settings:',
+        choices: addBackOption([
+          { name: '🚀 Jupiter Ultra V2', value: 'ultraV2' },
+          { name: '⚡ Jupiter Lite API', value: 'liteApi' },
+          { name: '📊 Default Slippage', value: 'defaultSlippage' },
+          { name: '⚡ Default Priority Fee', value: 'defaultPriorityFee' },
+          { name: '💰 Default Tip Amount', value: 'defaultTipAmount' },
+          { name: '🛣️ Default Router', value: 'defaultRouter' },
+          { name: '📡 Broadcast Mode', value: 'broadcastMode' },
+          { name: '🎯 Priority Level', value: 'priorityLevel' },
+          { name: '📋 View Current Settings', value: 'viewSettings' }
+        ])
+      }
+    ]);
+
+    switch (setting) {
+      case 'ultraV2': {
+        const { enableUltraV2 } = await inquirer.prompt([
+          {
+            type: 'confirm',
+            name: 'enableUltraV2',
+            message: 'Enable Jupiter Ultra V2 for better transaction success rate?',
+            default: settings.enableUltraV2 !== false
+          }
+        ]);
+        settings.enableUltraV2 = enableUltraV2;
+        saveSettings();
+        console.log(chalk.green(`Jupiter Ultra V2 ${enableUltraV2 ? 'enabled' : 'disabled'}.`));
+        break;
+      }
+      
+      case 'liteApi': {
+        const { enableLiteApi } = await inquirer.prompt([
+          {
+            type: 'confirm',
+            name: 'enableLiteApi',
+            message: 'Enable Jupiter Lite API for emergency sells and better reliability?',
+            default: settings.enableLiteApi !== false
+          }
+        ]);
+        settings.enableLiteApi = enableLiteApi;
+        saveSettings();
+        console.log(chalk.green(`Jupiter Lite API ${enableLiteApi ? 'enabled' : 'disabled'}.`));
+        break;
+      }
+      
+      case 'priorityLevel': {
+        const { priorityLevel } = await inquirer.prompt([
+          {
+            type: 'list',
+            name: 'priorityLevel',
+            message: 'Default priority level for Lite API:',
+            choices: [
+              { name: 'Low (1M lamports)', value: 'low' },
+              { name: 'Medium (2M lamports)', value: 'medium' },
+              { name: 'High (5M lamports)', value: 'high' },
+              { name: 'Very High (10M lamports)', value: 'veryHigh' }
+            ],
+            default: settings.priorityLevel || 'high'
+          }
+        ]);
+        settings.priorityLevel = priorityLevel;
+        saveSettings();
+        console.log(chalk.green(`Priority level set to ${priorityLevel}.`));
+        break;
+      }
+      
+      case 'defaultSlippage': {
+        const { defaultSlippage } = await inquirer.prompt([
+          {
+            type: 'input',
+            name: 'defaultSlippage',
+            message: 'Default slippage (%):',
+            default: settings.slippageLimit || 0.5,
+            validate: (input) => {
+              const num = parseFloat(input);
+              if (isNaN(num) || num < 0.1 || num > 50) return 'Slippage must be between 0.1% and 50%';
+              return true;
+            }
+          }
+        ]);
+        settings.slippageLimit = parseFloat(defaultSlippage);
+        saveSettings();
+        console.log(chalk.green(`Default slippage set to ${defaultSlippage}%.`));
+        break;
+      }
+      
+      case 'defaultPriorityFee': {
+        const { defaultPriorityFee } = await inquirer.prompt([
+          {
+            type: 'input',
+            name: 'defaultPriorityFee',
+            message: 'Default priority fee (micro-lamports):',
+            default: settings.priorityFee || 500,
+            validate: (input) => {
+              const num = parseInt(input);
+              if (isNaN(num) || num < 0) return 'Please enter a valid number';
+              return true;
+            }
+          }
+        ]);
+        settings.priorityFee = parseInt(defaultPriorityFee);
+        saveSettings();
+        console.log(chalk.green(`Default priority fee set to ${defaultPriorityFee} micro-lamports.`));
+        break;
+      }
+      
+      case 'defaultTipAmount': {
+        const { defaultTipAmount } = await inquirer.prompt([
+          {
+            type: 'input',
+            name: 'defaultTipAmount',
+            message: 'Default tip amount (SOL):',
+            default: settings.tipAmount || 0.0001,
+            validate: (input) => {
+              const num = parseFloat(input);
+              if (isNaN(num) || num < 0) return 'Please enter a valid amount';
+              return true;
+            }
+          }
+        ]);
+        settings.tipAmount = parseFloat(defaultTipAmount);
+        saveSettings();
+        console.log(chalk.green(`Default tip amount set to ${defaultTipAmount} SOL.`));
+        break;
+      }
+      
+      case 'defaultRouter': {
+        const { defaultRouter } = await inquirer.prompt([
+          {
+            type: 'list',
+            name: 'defaultRouter',
+            message: 'Default router selection:',
+            choices: [
+              { name: 'Auto (Best Route)', value: 'auto' },
+              { name: 'Jupiter Only', value: 'jupiter' },
+              { name: 'Metis Only', value: 'metis' },
+              { name: 'Hashflow Only', value: 'hashflow' }
+            ],
+            default: settings.defaultRouter || 'auto'
+          }
+        ]);
+        settings.defaultRouter = defaultRouter;
+        saveSettings();
+        console.log(chalk.green(`Default router set to ${defaultRouter}.`));
+        break;
+      }
+      
+      case 'broadcastMode': {
+        const { broadcastMode } = await inquirer.prompt([
+          {
+            type: 'list',
+            name: 'broadcastMode',
+            message: 'Default broadcast mode:',
+            choices: [
+              { name: 'Priority Fees', value: 'priority' },
+              { name: 'Jito', value: 'jito' },
+              { name: 'Nozomi', value: 'nozomi' },
+              { name: 'Standard', value: 'standard' }
+            ],
+            default: settings.broadcastMode || 'priority'
+          }
+        ]);
+        settings.broadcastMode = broadcastMode;
+        saveSettings();
+        console.log(chalk.green(`Default broadcast mode set to ${broadcastMode}.`));
+        break;
+      }
+      
+      case 'viewSettings': {
+        console.log(`\n${colors.cyan}Current Advanced Swap Settings:${colors.reset}`);
+        console.log(`${'─'.repeat(50)}`);
+        console.log(`${colors.cyan}Jupiter Ultra V2:${colors.reset} ${settings.enableUltraV2 !== false ? 'Enabled' : 'Disabled'}`);
+        console.log(`${colors.cyan}Default Slippage:${colors.reset} ${settings.slippageLimit || 0.5}%`);
+        console.log(`${colors.cyan}Default Priority Fee:${colors.reset} ${settings.priorityFee || 500} micro-lamports`);
+        console.log(`${colors.cyan}Default Tip Amount:${colors.reset} ${settings.tipAmount || 0.0001} SOL`);
+        console.log(`${colors.cyan}Default Router:${colors.reset} ${settings.defaultRouter || 'auto'}`);
+        console.log(`${colors.cyan}Broadcast Mode:${colors.reset} ${settings.broadcastMode || 'priority'}`);
+        console.log(`\n${colors.yellow}Press Enter to continue...${colors.reset}`);
+        await new Promise(resolve => {
+          const originalRawMode = process.stdin.isRaw;
+          const originalEncoding = process.stdin.encoding;
+          
+          process.stdin.setRawMode(true);
+          process.stdin.resume();
+          process.stdin.setEncoding('utf8');
+          
+          const onData = (data) => {
+            if (data === '\r' || data === '\n') {
+              process.stdin.setRawMode(false);
+              process.stdin.pause();
+              process.stdin.setRawMode(originalRawMode);
+              process.stdin.setEncoding(originalEncoding);
+              process.stdin.removeListener('data', onData);
+              resolve();
+            }
+          };
+          
+          process.stdin.on('data', onData);
+        });
+        break;
+      }
+      
       case 'back':
         exit = true;
         break;
@@ -3797,7 +4028,7 @@ async function initializeApp(menuState = MENU_STATES.MAIN) {
       
       // Compact status line with wallet info
       const status = connectionStatus.getStatus();
-      console.log(`${colors.yellow}🎯 PumpTool v2.0.0${colors.reset} | ${colors.dim}${new Date().toLocaleString()}${colors.reset} | ${colors.cyan}📡 ${status.bitquery ? '🟢' : '🔴'}${status.jupiter ? '🟢' : '🔴'}${status.birdeye ? '🟢' : '🔴'}${colors.reset}`);
+      console.log(`${colors.yellow}🎯 PumpTool v2.1.0${colors.reset} | ${colors.dim}${new Date().toLocaleString()}${colors.reset} | ${colors.cyan}📡 ${status.bitquery ? '🟢' : '🔴'}${status.jupiter ? '🟢' : '🔴'}${status.birdeye ? '🟢' : '🔴'}${colors.reset}`);
       
       // Display active wallet info
       if (walletInfo.name !== 'None') {
@@ -3826,13 +4057,12 @@ async function initializeApp(menuState = MENU_STATES.MAIN) {
         { number: '5', icon: '🔴', name: 'Sell Token', color: colors.red, value: 'quickSell' },
         { number: '6', icon: '🚨', name: 'Emergency Sell', color: colors.red, value: 'emergencySell' },
         { number: '7', icon: '🔥', name: 'Burn Tokens', color: colors.red, value: 'burnTokens' },
-        { number: '8', icon: '⚙️', name: 'Advanced Swap', color: colors.cyan, value: 'advancedSwap' },
-        { number: '9', icon: '📦', name: 'Bundle Trade', color: colors.yellow, value: 'bundle' },
-        { number: '10', icon: '🔔', name: 'Alerts', color: colors.orange, value: 'alerts' },
-        { number: '11', icon: '🌌', name: 'Jupiter', color: colors.green, value: 'jupiter' },
-        { number: '12', icon: '🤖', name: 'AI Tools', color: colors.cyan, value: 'ai_tools' },
-        { number: '13', icon: '🔍', name: 'Check Token', color: colors.purple, value: 'checktoken' },
-        { number: '14', icon: '❓', name: 'Help', color: colors.yellow, value: 'help' },
+        { number: '8', icon: '📦', name: 'Bundle Trade', color: colors.yellow, value: 'bundle' },
+        { number: '9', icon: '🔔', name: 'Alerts', color: colors.orange, value: 'alerts' },
+        { number: '10', icon: '🌌', name: 'Jupiter', color: colors.green, value: 'jupiter' },
+        { number: '11', icon: '🤖', name: 'AI Tools', color: colors.cyan, value: 'ai_tools' },
+        { number: '12', icon: '🔍', name: 'Check Token', color: colors.purple, value: 'checktoken' },
+        { number: '13', icon: '❓', name: 'Help', color: colors.yellow, value: 'help' },
         { number: '0', icon: '❌', name: 'Exit', color: colors.red, value: 'exit' }
       ];
       
@@ -3953,18 +4183,7 @@ async function initializeApp(menuState = MENU_STATES.MAIN) {
         await handleBurnTokens(wallet);
         return initializeApp(MENU_STATES.MAIN);
       }
-      if (action === 'advancedSwap') {
-        const walletInfo = await getActiveWalletInfo();
-        if (walletInfo.name === 'None') {
-          console.log(`${colors.red}❌ No active wallet selected${colors.reset}`);
-          console.log(`${colors.cyan}💡 Please select a wallet first${colors.reset}`);
-          await waitForSpaceKey();
-          return initializeApp(MENU_STATES.MAIN);
-        }
-        const wallet = loadWallet(walletInfo.name);
-        await advancedSwapMenu();
-        return initializeApp(MENU_STATES.MAIN);
-      }
+
       if (action === 'bundle') {
         await bundleBuySellMenu();
         return initializeApp(MENU_STATES.MAIN);
@@ -7210,13 +7429,32 @@ async function handleBuyToken(wallet) {
     // Simulate transaction steps with progress
     await progressMonitor.simulateTransactionSteps('BUY', 'TOKEN', `${buyAmount.toLocaleString()} tokens`);
     
-    // Perform swap
-    const result = await performSwap(
-      'So11111111111111111111111111111111111111112',
-      tokenMint,
-      amount * LAMPORTS_PER_SOL,
-      wallet
-    );
+    // Check if Lite API is enabled for buys
+    const useLiteApi = settingsManager.get('enableLiteApi') !== false; // Default to true
+    const priorityLevel = settingsManager.get('priorityLevel') || 'high';
+    
+    let result;
+    
+    if (useLiteApi) {
+      console.log(`${colors.cyan}⚡ Using Jupiter Lite API for buy${colors.reset}`);
+      console.log(`${colors.cyan}🎯 Priority Level: ${priorityLevel}${colors.reset}`);
+      
+      result = await performLiteSwap(
+        'So11111111111111111111111111111111111111112',
+        tokenMint,
+        amount * LAMPORTS_PER_SOL,
+        wallet,
+        null, // Use default slippage
+        priorityLevel
+      );
+    } else {
+      result = await performSwap(
+        'So11111111111111111111111111111111111111112',
+        tokenMint,
+        amount * LAMPORTS_PER_SOL,
+        wallet
+      );
+    }
 
     // Complete transaction with success
     progressMonitor.completeTransaction(true, result.signature);
@@ -7260,13 +7498,32 @@ async function handleBuyToken(wallet) {
           // Simulate sell transaction steps
           await sellProgressMonitor.simulateTransactionSteps('SELL', 'TOKEN', `${currentBalance.toLocaleString()} tokens`);
           
-          // Perform emergency sell
-          const sellResult = await performSwap(
-            tokenMint,
-            'So11111111111111111111111111111111111111112',
-            currentBalance,
-            wallet
-          );
+          // Check if Lite API is enabled for emergency sells
+          const useLiteApiForEmergency = settingsManager.get('enableLiteApi') !== false; // Default to true
+          const priorityLevelForEmergency = settingsManager.get('priorityLevel') || 'high';
+          
+          let sellResult;
+          
+          if (useLiteApiForEmergency) {
+            console.log(`${colors.cyan}⚡ Using Jupiter Lite API for emergency sell${colors.reset}`);
+            console.log(`${colors.cyan}🎯 Priority Level: ${priorityLevelForEmergency}${colors.reset}`);
+            
+            sellResult = await performLiteSwap(
+              tokenMint,
+              'So11111111111111111111111111111111111111112',
+              currentBalance,
+              wallet,
+              null, // Use default slippage
+              priorityLevelForEmergency
+            );
+          } else {
+            sellResult = await performSwap(
+              tokenMint,
+              'So11111111111111111111111111111111111111112',
+              currentBalance,
+              wallet
+            );
+          }
           
           // Complete sell transaction
           sellProgressMonitor.completeTransaction(true, sellResult.signature);
@@ -7627,13 +7884,20 @@ async function handleSellToken(wallet) {
       
       tokenMint = customMint;
       tokenBalance = await getTokenBalance(tokenMint, wallet.publicKey.toString());
-      const tokenMetadata = await getTokenMetadata(tokenMint);
-      tokenDecimals = tokenMetadata.decimals;
+      
+      try {
+        const tokenMetadata = await getTokenMetadata(tokenMint);
+        tokenDecimals = tokenMetadata.decimals || 9;
+        console.log(`${colors.cyan}📊 Token decimals: ${tokenDecimals}${colors.reset}`);
+      } catch (error) {
+        console.log(`${colors.yellow}⚠️ Could not fetch token metadata, using default decimals (9)${colors.reset}`);
+        tokenDecimals = 9;
+      }
     } else {
       // Selected from list
       tokenMint = selectedToken.mint;
       tokenBalance = selectedToken.balance;
-      tokenDecimals = selectedToken.decimals;
+      tokenDecimals = selectedToken.decimals || 9; // Ensure decimals is set
     }
 
     console.log(`${colors.blue}💰 Token Balance: ${tokenBalance.toLocaleString()}${colors.reset}`);
@@ -7685,9 +7949,33 @@ async function handleSellToken(wallet) {
     const amountToSell = (tokenBalance * percentage) / 100;
     console.log(`${colors.cyan}📊 Selling ${percentage}% of ${tokenBalance.toLocaleString()} = ${amountToSell.toLocaleString()} tokens${colors.reset}`);
 
-    // Convert to smallest units
-    const amountInSmallestUnits = Math.floor(amountToSell * Math.pow(10, tokenDecimals));
-    console.log(`${colors.cyan}📊 Amount in smallest units: ${amountInSmallestUnits.toLocaleString()}${colors.reset}`);
+    // Ensure we have valid decimals
+    if (!tokenDecimals || isNaN(tokenDecimals)) {
+      console.log(`${colors.yellow}⚠️ Token decimals not found, using default (9)${colors.reset}`);
+      tokenDecimals = 9;
+    }
+
+    // Convert to smallest units with proper validation
+    let amountInSmallestUnits;
+    try {
+      amountInSmallestUnits = Math.floor(amountToSell * Math.pow(10, tokenDecimals));
+      
+      // Validate the calculation
+      if (isNaN(amountInSmallestUnits) || amountInSmallestUnits <= 0) {
+        throw new Error('Invalid amount calculation');
+      }
+      
+      console.log(`${colors.cyan}📊 Amount in smallest units: ${amountInSmallestUnits.toLocaleString()}${colors.reset}`);
+      console.log(`${colors.cyan}📊 Token decimals: ${tokenDecimals}${colors.reset}`);
+      
+    } catch (calcError) {
+      console.error(`${colors.red}❌ Error calculating amount: ${calcError.message}${colors.reset}`);
+      console.log(`${colors.yellow}💡 Using raw balance as fallback${colors.reset}`);
+      
+      // Fallback: use the raw balance directly
+      amountInSmallestUnits = Math.floor(tokenBalance);
+      console.log(`${colors.cyan}📊 Fallback amount: ${amountInSmallestUnits.toLocaleString()}${colors.reset}`);
+    }
 
     // Get quote
     const quote = await getBestQuote(
@@ -7735,29 +8023,84 @@ async function handleSellToken(wallet) {
     // Simulate transaction steps with progress
     await progressMonitor.simulateTransactionSteps('SELL', 'TOKEN', `${sellAmount} tokens`);
     
-    // Perform swap
-    const result = await performSwap(
-      tokenMint,
-      'So11111111111111111111111111111111111111112',
-      amountInSmallestUnits,
-      wallet
-    );
-
-    // Complete transaction with success
-    progressMonitor.completeTransaction(true, result.signature);
-    
-    // Calculate and display profit from the sell
+    // Perform swap with improved error handling
     try {
-      const soldValue = quote.outAmount / LAMPORTS_PER_SOL;
-      console.log(`${colors.green}💰 Sold for: ${soldValue.toFixed(4)} SOL${colors.reset}`);
+      // Check if Lite API is enabled for regular sells
+      const useLiteApi = settingsManager.get('enableLiteApi') !== false; // Default to true
+      const priorityLevel = settingsManager.get('priorityLevel') || 'high';
       
-      // Calculate profit percentage based on original purchase (if available)
-      const profitInfo = await calculateAndDisplayProfit(tokenMint, amountToSell, tokenMetadata.decimals);
-      if (profitInfo.percentage !== 0) {
-        console.log(`${profitInfo.symbol} ${profitInfo.color}Profit: ${profitInfo.percentage.toFixed(2)}%${colors.reset}`);
+      let result;
+      
+      if (useLiteApi) {
+        console.log(`${colors.cyan}⚡ Using Jupiter Lite API for sell${colors.reset}`);
+        console.log(`${colors.cyan}🎯 Priority Level: ${priorityLevel}${colors.reset}`);
+        
+        result = await performLiteSwap(
+          tokenMint,
+          'So11111111111111111111111111111111111111112',
+          amountInSmallestUnits,
+          wallet,
+          null, // Use default slippage
+          priorityLevel
+        );
+      } else {
+        result = await performSwap(
+          tokenMint,
+          'So11111111111111111111111111111111111111112',
+          amountInSmallestUnits,
+          wallet
+        );
       }
-    } catch (error) {
-      console.log(`${colors.yellow}⚠️ Could not calculate profit details${colors.reset}`);
+
+      // Complete transaction with success
+      progressMonitor.completeTransaction(true, result.signature);
+      
+      // Calculate and display profit from the sell
+      try {
+        const soldValue = quote.outAmount / LAMPORTS_PER_SOL;
+        console.log(`${colors.green}💰 Sold for: ${soldValue.toFixed(4)} SOL${colors.reset}`);
+        
+        // Calculate profit percentage based on original purchase (if available)
+        const profitInfo = await calculateAndDisplayProfit(tokenMint, amountToSell, tokenMetadata.decimals);
+        if (profitInfo.percentage !== 0) {
+          console.log(`${profitInfo.symbol} ${profitInfo.color}Profit: ${profitInfo.percentage.toFixed(2)}%${colors.reset}`);
+        }
+      } catch (error) {
+        console.log(`${colors.yellow}⚠️ Could not calculate profit details${colors.reset}`);
+      }
+      
+      console.log(`${colors.green}✅ Sell transaction completed successfully!${colors.reset}`);
+      console.log(`${colors.blue}🔗 Solscan: ${generateSolscanLink(result.signature)}${colors.reset}`);
+      
+    } catch (swapError) {
+      // Complete transaction with failure
+      progressMonitor.completeTransaction(false);
+      
+      console.error(`${colors.red}❌ Sell failed: ${swapError.message}${colors.reset}`);
+      
+      // Provide helpful error messages
+      if (swapError.message.includes('Versioned messages must be deserialized')) {
+        console.log(`${colors.yellow}💡 This appears to be a transaction format issue. Trying alternative method...${colors.reset}`);
+        
+        // Try alternative approach with legacy transaction
+        try {
+          console.log(`${colors.cyan}🔄 Retrying with legacy transaction format...${colors.reset}`);
+          
+          // You could implement a fallback method here
+          console.log(`${colors.yellow}⚠️ Please try the transaction again or contact support${colors.reset}`);
+        } catch (retryError) {
+          console.error(`${colors.red}❌ Retry also failed: ${retryError.message}${colors.reset}`);
+        }
+      } else if (swapError.message.includes('Could not find any route')) {
+        console.log(`${colors.yellow}💡 This token has no liquidity for selling${colors.reset}`);
+        console.log(`${colors.cyan}🔥 Consider burning the tokens instead${colors.reset}`);
+      } else {
+        console.log(`${colors.yellow}💡 Common solutions:${colors.reset}`);
+        console.log(`   • Check your internet connection`);
+        console.log(`   • Verify the token has liquidity`);
+        console.log(`   • Try with a smaller amount`);
+        console.log(`   • Check your SOL balance for fees`);
+      }
     }
 
   } catch (error) {
@@ -8239,16 +8582,34 @@ async function handleEmergencySell(wallet) {
         const originalPriorityFee = settingsManager.get('priorityFee');
         settingsManager.set('priorityFee', optimalPriorityFee);
         
-        // Use Ultra V2 for emergency sells
-        const useUltraV2 = settingsManager.get('enableUltraV2') !== false; // Default to true
-        result = await performSwap(
-          tokenMint,
-          'So11111111111111111111111111111111111111112',
-          atomicSellAmount, // Use atomic amount for the swap
-          wallet,
-          successfulSlippage, // Use the slippage that worked for the quote
-          useUltraV2 // Enable Ultra V2 for better success rate
-        );
+        // Check if Lite API is enabled for emergency sells
+        const useLiteApi = settingsManager.get('enableLiteApi') !== false; // Default to true for emergency sells
+        const priorityLevel = settingsManager.get('priorityLevel') || 'high';
+        
+        if (useLiteApi) {
+          console.log(`${colors.cyan}⚡ Using Jupiter Lite API for emergency sell${colors.reset}`);
+          console.log(`${colors.cyan}🎯 Priority Level: ${priorityLevel}${colors.reset}`);
+          
+          result = await performLiteSwap(
+            tokenMint,
+            'So11111111111111111111111111111111111111112',
+            atomicSellAmount, // Use atomic amount for the swap
+            wallet,
+            successfulSlippage, // Use the slippage that worked for the quote
+            priorityLevel // Use configured priority level
+          );
+        } else {
+          // Use Ultra V2 for emergency sells
+          const useUltraV2 = settingsManager.get('enableUltraV2') !== false; // Default to true
+          result = await performSwap(
+            tokenMint,
+            'So11111111111111111111111111111111111111112',
+            atomicSellAmount, // Use atomic amount for the swap
+            wallet,
+            successfulSlippage, // Use the slippage that worked for the quote
+            useUltraV2 // Enable Ultra V2 for better success rate
+          );
+        }
         
         // Restore original priority fee
         settingsManager.set('priorityFee', originalPriorityFee);

@@ -11,6 +11,9 @@ const JUPITER_QUOTE_API = 'https://quote-api.jup.ag/v6/quote';
 const JUPITER_SWAP_API = 'https://quote-api.jup.ag/v6/swap';
 const JUPITER_SWAP_TRANSACTION_API = 'https://quote-api.jup.ag/v6/swap';
 
+// Jupiter Lite API endpoints
+const JUPITER_LITE_SWAP_API = 'https://lite-api.jup.ag/swap/v1/swap';
+
 // Ultra V2 API endpoints
 const ULTRA_V2_QUOTE_API = 'https://quote-api.jup.ag/v6/quote';
 const ULTRA_V2_SWAP_API = 'https://quote-api.jup.ag/v6/swap';
@@ -108,7 +111,10 @@ export async function getSwapTransaction(route, userPublicKey, useUltraV2 = true
     const requestBody = {
       quoteResponse: route,
       userPublicKey: userPublicKey,
-      wrapUnwrapSOL: true
+      wrapUnwrapSOL: true,
+      // Add required fields for v6 API
+      otherAmountThreshold: route.outAmount,
+      asLegacyTransaction: false
     };
     
     if (useUltraV2) {
@@ -246,6 +252,7 @@ export async function performSwap(fromMint, toMint, amount, wallet, slippage = n
       };
       
     } catch (versionedError) {
+      console.log(`${colors.yellow}⚠️ Versioned transaction failed, trying legacy format...${colors.reset}`);
       try {
         // Fallback to legacy transaction
         transaction = Transaction.from(Buffer.from(swapData.swapTransaction, 'base64'));
@@ -278,14 +285,193 @@ export async function performSwap(fromMint, toMint, amount, wallet, slippage = n
           confirmation: confirmation
         };
         
-              } catch (legacyError) {
-          throw new Error(`Failed to process transaction: ${versionedError.message} | ${legacyError.message}`);
+      } catch (legacyError) {
+        console.error(`${colors.red}❌ Both versioned and legacy transaction formats failed${colors.reset}`);
+        console.error(`${colors.red}Versioned error: ${versionedError.message}${colors.reset}`);
+        console.error(`${colors.red}Legacy error: ${legacyError.message}${colors.reset}`);
+        
+        // Try alternative approach - use v5 API as fallback
+        try {
+          console.log(`${colors.cyan}🔄 Trying alternative API version...${colors.reset}`);
+          
+          // Use v5 API as fallback
+          const v5Response = await fetch('https://quote-api.jup.ag/v5/swap', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              quoteResponse: quote,
+              userPublicKey: wallet.publicKey.toString(),
+              wrapUnwrapSOL: true
+            })
+          });
+          
+          if (v5Response.ok) {
+            const v5SwapData = await v5Response.json();
+            
+            // Try with v5 transaction format
+            transaction = Transaction.from(Buffer.from(v5SwapData.swapTransaction, 'base64'));
+            transaction.sign(wallet);
+            
+            const signature = await connection.sendRawTransaction(transaction.serialize(), {
+              skipPreflight: false,
+              preflightCommitment: 'confirmed'
+            });
+            
+            console.log(`${colors.green}✅ Swap transaction sent with v5 API!${colors.reset}`);
+            console.log(`${colors.blue}📝 Signature: ${signature}${colors.reset}`);
+            
+            const confirmation = await connection.confirmTransaction(signature, 'confirmed');
+            
+            if (confirmation.value.err) {
+              throw new Error(`Transaction failed: ${confirmation.value.err}`);
+            }
+            
+            console.log(`${colors.green}✅ Swap completed successfully!${colors.reset}`);
+            
+            return {
+              success: true,
+              signature: signature,
+              quote: quote,
+              confirmation: confirmation
+            };
+          }
+        } catch (v5Error) {
+          console.error(`${colors.red}❌ v5 API fallback also failed: ${v5Error.message}${colors.reset}`);
         }
+        
+        throw new Error(`Failed to process transaction: ${versionedError.message} | ${legacyError.message}`);
       }
+    }
     
   } catch (error) {
     console.error(`${colors.red}❌ Swap failed: ${error.message}${colors.reset}`);
     logToFile(`Jupiter swap error: ${error.message}`, 'error');
+    throw error;
+  }
+}
+
+/**
+ * Perform swap using Jupiter Lite API (more reliable for emergency sells)
+ * @param {string} fromMint - Source token mint address
+ * @param {string} toMint - Destination token mint address
+ * @param {number} amount - Amount to swap
+ * @param {Object} wallet - Wallet object with keypair
+ * @param {number} slippage - Slippage tolerance in basis points (default: 50 = 0.5%)
+ * @param {string} priorityLevel - Priority level: 'low', 'medium', 'high', 'veryHigh'
+ * @returns {Promise<Object>} Swap result
+ */
+export async function performLiteSwap(fromMint, toMint, amount, wallet, slippage = null, priorityLevel = 'high') {
+  try {
+    console.log(`${colors.cyan}🚀 Starting Lite swap...${colors.reset}`);
+    console.log(`${colors.yellow}From: ${fromMint}${colors.reset}`);
+    console.log(`${colors.yellow}To: ${toMint}${colors.reset}`);
+    console.log(`${colors.yellow}Amount: ${amount}${colors.reset}`);
+    console.log(`${colors.yellow}Priority Level: ${priorityLevel}${colors.reset}`);
+    
+    // Get settings
+    const slippageLimit = slippage !== null ? slippage : settingsManager.get('slippageLimit') || 0.5;
+    const slippageBps = Math.floor(slippageLimit * 100);
+    
+    // Get quote first
+    const quote = await getBestQuote(fromMint, toMint, amount, false); // Don't use Ultra V2 for Lite API
+    
+    // Prepare Lite API request
+    const liteRequest = {
+      userPublicKey: wallet.publicKey.toString(),
+      quoteResponse: {
+        inputMint: quote.inputMint,
+        inAmount: quote.inAmount,
+        outputMint: quote.outputMint,
+        outAmount: quote.outAmount,
+        otherAmountThreshold: quote.outAmount,
+        swapMode: "ExactIn",
+        slippageBps: slippageBps,
+        platformFee: null,
+        priceImpactPct: quote.priceImpactPct,
+        routePlan: quote.routePlan
+      },
+      prioritizationFeeLamports: {
+        priorityLevelWithMaxLamports: {
+          maxLamports: priorityLevel === 'veryHigh' ? 10000000 : 
+                       priorityLevel === 'high' ? 5000000 :
+                       priorityLevel === 'medium' ? 2000000 : 1000000,
+          priorityLevel: priorityLevel
+        }
+      },
+      dynamicComputeUnitLimit: true
+    };
+    
+    console.log(`${colors.cyan}🔧 Sending Lite API request...${colors.reset}`);
+    
+    // Send to Jupiter Lite API
+    const response = await fetch(JUPITER_LITE_SWAP_API, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      },
+      body: JSON.stringify(liteRequest)
+    });
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`HTTP ${response.status}: ${errorText}`);
+    }
+    
+    const swapResult = await response.json();
+    
+    if (!swapResult.swapTransaction) {
+      throw new Error('No swap transaction received from Lite API');
+    }
+    
+    console.log(`${colors.green}✅ Lite API transaction received${colors.reset}`);
+    
+    // Sign and send transaction
+    const connection = new Connection(getRpcEndpoint());
+    
+    // Decode and sign transaction
+    let transaction;
+    try {
+      // Try versioned transaction first
+      transaction = VersionedTransaction.deserialize(Buffer.from(swapResult.swapTransaction, 'base64'));
+      transaction.sign([wallet]);
+    } catch (versionedError) {
+      // Fallback to legacy transaction
+      transaction = Transaction.from(Buffer.from(swapResult.swapTransaction, 'base64'));
+      transaction.sign(wallet);
+    }
+    
+    // Send transaction
+    const signature = await connection.sendTransaction(transaction, {
+      skipPreflight: false,
+      preflightCommitment: 'confirmed'
+    });
+    
+    console.log(`${colors.green}✅ Lite swap transaction sent!${colors.reset}`);
+    console.log(`${colors.blue}📝 Signature: ${signature}${colors.reset}`);
+    
+    // Wait for confirmation
+    const confirmation = await connection.confirmTransaction(signature, 'confirmed');
+    
+    if (confirmation.value.err) {
+      throw new Error(`Transaction failed: ${confirmation.value.err}`);
+    }
+    
+    console.log(`${colors.green}✅ Lite swap completed successfully!${colors.reset}`);
+    
+    return {
+      success: true,
+      signature: signature,
+      quote: quote,
+      confirmation: confirmation,
+      method: 'lite'
+    };
+    
+  } catch (error) {
+    console.error(`${colors.red}❌ Lite swap failed: ${error.message}${colors.reset}`);
+    logToFile(`Jupiter Lite swap error: ${error.message}`, 'error');
     throw error;
   }
 }
@@ -468,8 +654,9 @@ export async function getQuickTokenDisplay(walletAddress) {
     const tokensWithInfo = await Promise.all(
       tokens.map(async (token, index) => {
         try {
-          // Get basic token info (symbol, name)
+          // Get basic token info (symbol, name, decimals)
           const tokenInfo = await getTokenInfo(token.mint);
+          const tokenMetadata = await getTokenMetadata(token.mint);
           
           return {
             index: index + 1,
@@ -477,7 +664,8 @@ export async function getQuickTokenDisplay(walletAddress) {
             balance: token.balance,
             symbol: tokenInfo.symbol || token.mint.slice(0, 8) + '...',
             name: tokenInfo.name || 'Unknown Token',
-            shortMint: token.mint.slice(0, 8) + '...' + token.mint.slice(-8)
+            shortMint: token.mint.slice(0, 8) + '...' + token.mint.slice(-8),
+            decimals: tokenMetadata.decimals || 9 // Default to 9 decimals if not found
           };
         } catch (error) {
           // Fallback for tokens that can't be fetched
@@ -487,7 +675,8 @@ export async function getQuickTokenDisplay(walletAddress) {
             balance: token.balance,
             symbol: token.mint.slice(0, 8) + '...',
             name: 'Unknown Token',
-            shortMint: token.mint.slice(0, 8) + '...' + token.mint.slice(-8)
+            shortMint: token.mint.slice(0, 8) + '...' + token.mint.slice(-8),
+            decimals: 9 // Default to 9 decimals
           };
         }
       })
