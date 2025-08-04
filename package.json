@@ -1,6 +1,6 @@
 {
   "name": "pumptool",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "dev",
   "type": "module",
   "main": "bitquery-stream.js",

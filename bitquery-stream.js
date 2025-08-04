@@ -38,7 +38,9 @@ import {
   getTokenPrice,
   calculateTokenPnL,
   burnTokens,
-  canTokenBeSold
+  canTokenBeSold,
+  closeTokenAccount,
+  sendToDeadAddress
 } from './modules/jupiter-swap.js';
 import { 
   optimizedRateLimiter, 
@@ -7801,32 +7803,70 @@ async function handleBurnTokens(wallet) {
       return;
     }
 
-    // Get burn amount
-    const { burnAmount } = await inquirer.prompt([
+    // Get burn amount with percentage option
+    const { burnType } = await inquirer.prompt([
       {
-        type: 'input',
-        name: 'burnAmount',
-        message: `Enter amount to burn (max: ${tokenBalance.toLocaleString()}):`,
-        validate: (input) => {
-          const num = parseFloat(input);
-          if (isNaN(num)) return 'Please enter a valid number';
-          if (num <= 0) return 'Amount must be greater than 0';
-          if (num > tokenBalance) return `Amount cannot exceed balance (${tokenBalance.toLocaleString()})`;
-          return true;
-        },
-        filter: (input) => parseFloat(input)
+        type: 'list',
+        name: 'burnType',
+        message: 'How would you like to specify the burn amount?',
+        choices: [
+          { name: 'Enter specific amount', value: 'amount' },
+          { name: 'Enter percentage (e.g., 50 for 50%)', value: 'percentage' },
+          { name: 'Burn 100% (all tokens)', value: 'all' }
+        ]
       }
     ]);
 
+    let burnAmount;
+    
+    if (burnType === 'all') {
+      burnAmount = tokenBalance;
+    } else if (burnType === 'percentage') {
+      const { percentage } = await inquirer.prompt([
+        {
+          type: 'input',
+          name: 'percentage',
+          message: 'Enter percentage to burn (1-100):',
+          validate: (input) => {
+            const num = parseFloat(input);
+            if (isNaN(num)) return 'Please enter a valid number';
+            if (num <= 0 || num > 100) return 'Percentage must be between 1 and 100';
+            return true;
+          },
+          filter: (input) => parseFloat(input)
+        }
+      ]);
+      burnAmount = (tokenBalance * percentage) / 100;
+    } else {
+      const { amount } = await inquirer.prompt([
+        {
+          type: 'input',
+          name: 'amount',
+          message: `Enter amount to burn (max: ${tokenBalance.toLocaleString()}):`,
+          validate: (input) => {
+            const num = parseFloat(input);
+            if (isNaN(num)) return 'Please enter a valid number';
+            if (num <= 0) return 'Amount must be greater than 0';
+            if (num > tokenBalance) return `Amount cannot exceed balance (${tokenBalance.toLocaleString()})`;
+            return true;
+          },
+          filter: (input) => parseFloat(input)
+        }
+      ]);
+      burnAmount = amount;
+    }
+
     // Convert to smallest units
     const amountToBurn = Math.floor(burnAmount * Math.pow(10, tokenDecimals));
+    
+    console.log(`${colors.cyan}📊 Converting ${burnAmount} tokens to ${amountToBurn.toLocaleString()} smallest units${colors.reset}`);
 
     // Final confirmation
     const { confirm } = await inquirer.prompt([
       {
         type: 'confirm',
         name: 'confirm',
-        message: `🔥 CONFIRM BURN: Burn ${burnAmount.toLocaleString()} tokens? (This action is irreversible!)`,
+        message: `🔥 CONFIRM BURN: Close token account and burn ${burnAmount.toLocaleString()} tokens? (This action is irreversible!)`,
         default: false
       }
     ]);

@@ -568,7 +568,7 @@ export async function getSwapHistory(walletAddress, limit = 10) {
 }
 
 /**
- * Burn tokens (send to burn address)
+ * Burn tokens by sending to dead address (simplest and most reliable method)
  * @param {string} mintAddress - Token mint address
  * @param {number} amount - Amount to burn (in smallest units)
  * @param {Object} wallet - Wallet keypair
@@ -576,13 +576,10 @@ export async function getSwapHistory(walletAddress, limit = 10) {
  */
 export async function burnTokens(mintAddress, amount, wallet) {
   try {
-    console.log(`${colors.red}🔥 Burning ${amount.toLocaleString()} tokens...${colors.reset}`);
+    console.log(`${colors.red}🔥 Burning tokens by sending to dead address...${colors.reset}`);
     
     // Create connection
     const connection = new Connection(getRpcEndpoint());
-    
-    // Create burn address (dead wallet)
-    const burnAddress = new PublicKey('11111111111111111111111111111112'); // System Program burn address
     
     // Get token account info
     const tokenMint = new PublicKey(mintAddress);
@@ -596,15 +593,23 @@ export async function burnTokens(mintAddress, amount, wallet) {
     
     const userTokenAccountAddress = userTokenAccount.value[0].pubkey;
     
+    // Get account info to check balance
+    const accountInfo = await connection.getTokenAccountBalance(userTokenAccountAddress);
+    const currentBalance = accountInfo.value.amount;
+    
+    console.log(`${colors.cyan}📊 Current balance: ${currentBalance} smallest units${colors.reset}`);
+    console.log(`${colors.cyan}📊 Attempting to burn: ${amount} smallest units${colors.reset}`);
+    
     // Create transaction
     const transaction = new Transaction();
     
-    // Add transfer instruction to burn address
+    // Create transfer instruction to a known dead address
+    // Using a simple approach: transfer to the mint address itself (which acts as a dead address)
     const transferInstruction = {
       programId: TOKEN_PROGRAM_ID,
       keys: [
         { pubkey: userTokenAccountAddress, isSigner: false, isWritable: true },
-        { pubkey: burnAddress, isSigner: false, isWritable: true },
+        { pubkey: tokenMint, isSigner: false, isWritable: true },
         { pubkey: wallet.publicKey, isSigner: true, isWritable: false }
       ],
       data: Buffer.from([
@@ -631,18 +636,187 @@ export async function burnTokens(mintAddress, amount, wallet) {
       throw new Error(`Transaction failed: ${confirmation.value.err}`);
     }
     
-    console.log(`${colors.green}✅ Tokens burned successfully!${colors.reset}`);
+    console.log(`${colors.green}✅ Tokens sent to dead address successfully!${colors.reset}`);
     console.log(`${colors.blue}📝 Transaction: ${signature}${colors.reset}`);
+    console.log(`${colors.yellow}💡 Tokens have been effectively burned${colors.reset}`);
     
     return {
       success: true,
       signature: signature,
+      method: 'send_to_dead_address',
       amount: amount
     };
     
   } catch (error) {
     console.error(`${colors.red}❌ Error burning tokens: ${error.message}${colors.reset}`);
     logToFile(`Token burn error: ${error.message}`, 'error');
+    
+    // Try alternative method - close account
+    console.log(`${colors.yellow}🔄 Trying alternative burn method...${colors.reset}`);
+    try {
+      return await closeTokenAccount(mintAddress, wallet);
+    } catch (closeError) {
+      console.error(`${colors.red}❌ Alternative burn method also failed: ${closeError.message}${colors.reset}`);
+      throw error; // Throw original error
+    }
+  }
+}
+
+/**
+ * Close token account (alternative burn method)
+ * @param {string} mintAddress - Token mint address
+ * @param {Object} wallet - Wallet keypair
+ * @returns {Promise<Object>} Close transaction result
+ */
+export async function closeTokenAccount(mintAddress, wallet) {
+  try {
+    console.log(`${colors.red}🔥 Closing token account...${colors.reset}`);
+    
+    // Create connection
+    const connection = new Connection(getRpcEndpoint());
+    
+    // Get token account info
+    const tokenMint = new PublicKey(mintAddress);
+    const userTokenAccount = await connection.getTokenAccountsByOwner(wallet.publicKey, {
+      mint: tokenMint
+    });
+    
+    if (userTokenAccount.value.length === 0) {
+      throw new Error('No token account found for this mint');
+    }
+    
+    const userTokenAccountAddress = userTokenAccount.value[0].pubkey;
+    
+    // Create transaction
+    const transaction = new Transaction();
+    
+    // Create close account instruction
+    const closeInstruction = {
+      programId: TOKEN_PROGRAM_ID,
+      keys: [
+        { pubkey: userTokenAccountAddress, isSigner: false, isWritable: true },
+        { pubkey: wallet.publicKey, isSigner: true, isWritable: true },
+        { pubkey: wallet.publicKey, isSigner: true, isWritable: false }
+      ],
+      data: Buffer.from([9]) // Close account instruction
+    };
+    
+    transaction.add(closeInstruction);
+    
+    // Get recent blockhash
+    const { blockhash } = await connection.getLatestBlockhash();
+    transaction.recentBlockhash = blockhash;
+    transaction.feePayer = wallet.publicKey;
+    
+    // Sign and send transaction
+    transaction.sign(wallet);
+    const signature = await connection.sendRawTransaction(transaction.serialize());
+    
+    // Wait for confirmation
+    const confirmation = await connection.confirmTransaction(signature);
+    
+    if (confirmation.value.err) {
+      throw new Error(`Transaction failed: ${confirmation.value.err}`);
+    }
+    
+    console.log(`${colors.green}✅ Token account closed successfully!${colors.reset}`);
+    console.log(`${colors.blue}📝 Transaction: ${signature}${colors.reset}`);
+    
+    return {
+      success: true,
+      signature: signature,
+      method: 'close_account'
+    };
+    
+  } catch (error) {
+    console.error(`${colors.red}❌ Error closing token account: ${error.message}${colors.reset}`);
+    logToFile(`Token close error: ${error.message}`, 'error');
+    throw error;
+  }
+}
+
+/**
+ * Send tokens to dead address (most reliable burn method)
+ * @param {string} mintAddress - Token mint address
+ * @param {number} amount - Amount to burn (in smallest units)
+ * @param {Object} wallet - Wallet keypair
+ * @returns {Promise<Object>} Burn transaction result
+ */
+export async function sendToDeadAddress(mintAddress, amount, wallet) {
+  try {
+    console.log(`${colors.red}🔥 Sending tokens to dead address...${colors.reset}`);
+    
+    // Create connection
+    const connection = new Connection(getRpcEndpoint());
+    
+    // Get token account info
+    const tokenMint = new PublicKey(mintAddress);
+    const userTokenAccount = await connection.getTokenAccountsByOwner(wallet.publicKey, {
+      mint: tokenMint
+    });
+    
+    if (userTokenAccount.value.length === 0) {
+      throw new Error('No token account found for this mint');
+    }
+    
+    const userTokenAccountAddress = userTokenAccount.value[0].pubkey;
+    
+    // Get token metadata to understand decimals
+    const tokenMetadata = await getTokenMetadata(mintAddress);
+    const decimals = tokenMetadata.decimals;
+    
+    // Use amount as is (it should already be in smallest units from the calling function)
+    const amountInSmallestUnits = amount;
+    
+    console.log(`${colors.cyan}📊 Sending ${amountInSmallestUnits.toLocaleString()} smallest units to dead address${colors.reset}`);
+    
+    // Create transaction
+    const transaction = new Transaction();
+    
+    // Create transfer instruction to mint address itself (simplest dead address)
+    const transferInstruction = {
+      programId: TOKEN_PROGRAM_ID,
+      keys: [
+        { pubkey: userTokenAccountAddress, isSigner: false, isWritable: true },
+        { pubkey: tokenMint, isSigner: false, isWritable: true },
+        { pubkey: wallet.publicKey, isSigner: true, isWritable: false }
+      ],
+      data: Buffer.from([
+        3, // Transfer instruction
+        ...new Uint8Array(new Uint8Array(amountInSmallestUnits.toString().padStart(8, '0').split('').map(Number)))
+      ])
+    };
+    
+    transaction.add(transferInstruction);
+    
+    // Get recent blockhash
+    const { blockhash } = await connection.getLatestBlockhash();
+    transaction.recentBlockhash = blockhash;
+    transaction.feePayer = wallet.publicKey;
+    
+    // Sign and send transaction
+    transaction.sign(wallet);
+    const signature = await connection.sendRawTransaction(transaction.serialize());
+    
+    // Wait for confirmation
+    const confirmation = await connection.confirmTransaction(signature);
+    
+    if (confirmation.value.err) {
+      throw new Error(`Transaction failed: ${confirmation.value.err}`);
+    }
+    
+    console.log(`${colors.green}✅ Tokens sent to dead address successfully!${colors.reset}`);
+    console.log(`${colors.blue}📝 Transaction: ${signature}${colors.reset}`);
+    
+    return {
+      success: true,
+      signature: signature,
+      method: 'send_to_dead_address'
+    };
+    
+  } catch (error) {
+    console.error(`${colors.red}❌ Error sending to dead address: ${error.message}${colors.reset}`);
+    logToFile(`Dead address send error: ${error.message}`, 'error');
     throw error;
   }
 }
