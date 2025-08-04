@@ -36,7 +36,9 @@ import {
   getAllTokenBalances,
   getTokenInfo,
   getTokenPrice,
-  calculateTokenPnL
+  calculateTokenPnL,
+  burnTokens,
+  canTokenBeSold
 } from './modules/jupiter-swap.js';
 import { 
   optimizedRateLimiter, 
@@ -3795,12 +3797,14 @@ async function initializeApp(menuState = MENU_STATES.MAIN) {
         { number: '3', icon: '💼', name: 'Wallets', color: colors.magenta, value: 'wallets' },
         { number: '4', icon: '🟢', name: 'Buy Token', color: colors.green, value: 'quickBuy' },
         { number: '5', icon: '🔴', name: 'Sell Token', color: colors.red, value: 'quickSell' },
-        { number: '6', icon: '📦', name: 'Bundle Trade', color: colors.yellow, value: 'bundle' },
-        { number: '7', icon: '🔔', name: 'Alerts', color: colors.orange, value: 'alerts' },
-        { number: '8', icon: '🌌', name: 'Jupiter', color: colors.green, value: 'jupiter' },
-        { number: '9', icon: '🤖', name: 'AI Tools', color: colors.cyan, value: 'ai_tools' },
-        { number: '10', icon: '🔍', name: 'Check Token', color: colors.purple, value: 'checktoken' },
-        { number: '11', icon: '❓', name: 'Help', color: colors.yellow, value: 'help' },
+        { number: '6', icon: '🚨', name: 'Emergency Sell', color: colors.red, value: 'emergencySell' },
+        { number: '7', icon: '🔥', name: 'Burn Tokens', color: colors.red, value: 'burnTokens' },
+        { number: '8', icon: '📦', name: 'Bundle Trade', color: colors.yellow, value: 'bundle' },
+        { number: '9', icon: '🔔', name: 'Alerts', color: colors.orange, value: 'alerts' },
+        { number: '10', icon: '🌌', name: 'Jupiter', color: colors.green, value: 'jupiter' },
+        { number: '11', icon: '🤖', name: 'AI Tools', color: colors.cyan, value: 'ai_tools' },
+        { number: '12', icon: '🔍', name: 'Check Token', color: colors.purple, value: 'checktoken' },
+        { number: '13', icon: '❓', name: 'Help', color: colors.yellow, value: 'help' },
         { number: '0', icon: '❌', name: 'Exit', color: colors.red, value: 'exit' }
       ];
       
@@ -3854,7 +3858,7 @@ async function initializeApp(menuState = MENU_STATES.MAIN) {
           validate: (input) => {
             const num = parseInt(input);
             if (isNaN(num)) return 'Please enter a valid number';
-            if (num < 0 || num > 11) return 'Please enter a number between 0 and 11';
+            if (num < 0 || num > 13) return 'Please enter a number between 0 and 13';
             return true;
           }
         }
@@ -3895,6 +3899,30 @@ async function initializeApp(menuState = MENU_STATES.MAIN) {
         }
         const wallet = loadWallet(walletInfo.name);
         await handleSellToken(wallet);
+        return initializeApp(MENU_STATES.MAIN);
+      }
+      if (action === 'emergencySell') {
+        const walletInfo = await getActiveWalletInfo();
+        if (walletInfo.name === 'None') {
+          console.log(`${colors.red}❌ No active wallet selected${colors.reset}`);
+          console.log(`${colors.cyan}💡 Please select a wallet first${colors.reset}`);
+          await waitForSpaceKey();
+          return initializeApp(MENU_STATES.MAIN);
+        }
+        const wallet = loadWallet(walletInfo.name);
+        await handleEmergencySell(wallet);
+        return initializeApp(MENU_STATES.MAIN);
+      }
+      if (action === 'burnTokens') {
+        const walletInfo = await getActiveWalletInfo();
+        if (walletInfo.name === 'None') {
+          console.log(`${colors.red}❌ No active wallet selected${colors.reset}`);
+          console.log(`${colors.cyan}💡 Please select a wallet first${colors.reset}`);
+          await waitForSpaceKey();
+          return initializeApp(MENU_STATES.MAIN);
+        }
+        const wallet = loadWallet(walletInfo.name);
+        await handleBurnTokens(wallet);
         return initializeApp(MENU_STATES.MAIN);
       }
       if (action === 'bundle') {
@@ -6655,19 +6683,79 @@ async function handleBuyToken(wallet) {
       amount * LAMPORTS_PER_SOL
     );
 
-    // Confirm swap
-    const { confirm } = await inquirer.prompt([
-      {
-        type: 'confirm',
-        name: 'confirm',
-        message: `Confirm swap ${amount} SOL for ${quote.outAmount} tokens?`,
-        default: false
-      }
-    ]);
+    // Show quote and emergency sell option
+    console.log(`${colors.cyan}📊 Quote: ${amount} SOL → ${quote.outAmount} tokens${colors.reset}`);
+    console.log(`${colors.yellow}💡 Hotkeys: ENTER=Confirm | E=Emergency Sell Mode | C=Cancel${colors.reset}`);
+    
+    // Wait for user input with hotkeys
+    const userAction = await new Promise((resolve) => {
+      const originalRawMode = process.stdin.isRaw;
+      const originalEncoding = process.stdin.encoding;
+      
+      process.stdin.setRawMode(true);
+      process.stdin.resume();
+      process.stdin.setEncoding('utf8');
+      
+      const onData = (data) => {
+        if (data === '\r' || data === '\n') {
+          process.stdin.setRawMode(false);
+          process.stdin.pause();
+          process.stdin.setRawMode(originalRawMode);
+          process.stdin.setEncoding(originalEncoding);
+          process.stdin.removeListener('data', onData);
+          resolve('confirm');
+        } else if (data.toLowerCase() === 'e') {
+          process.stdin.setRawMode(false);
+          process.stdin.pause();
+          process.stdin.setRawMode(originalRawMode);
+          process.stdin.setEncoding(originalEncoding);
+          process.stdin.removeListener('data', onData);
+          resolve('emergency_sell');
+        } else if (data.toLowerCase() === 'c') {
+          process.stdin.setRawMode(false);
+          process.stdin.pause();
+          process.stdin.setRawMode(originalRawMode);
+          process.stdin.setEncoding(originalEncoding);
+          process.stdin.removeListener('data', onData);
+          resolve('cancel');
+        }
+      };
+      
+      process.stdin.on('data', onData);
+      
+      // Auto-confirm after 10 seconds if no key pressed
+      setTimeout(() => {
+        process.stdin.setRawMode(false);
+        process.stdin.pause();
+        process.stdin.setRawMode(originalRawMode);
+        process.stdin.setEncoding(originalEncoding);
+        process.stdin.removeListener('data', onData);
+        resolve('confirm');
+      }, 10000);
+    });
 
-    if (!confirm) {
+    if (userAction === 'cancel') {
       console.log(`${colors.yellow}⚠️ Swap cancelled${colors.reset}`);
       return;
+    }
+    
+    if (userAction === 'emergency_sell') {
+      console.log(`${colors.red}🚨 EMERGENCY SELL MODE ACTIVATED${colors.reset}`);
+      console.log(`${colors.yellow}💡 This will automatically sell 100% of the tokens after purchase${colors.reset}`);
+      
+      const { confirmEmergency } = await inquirer.prompt([
+        {
+          type: 'confirm',
+          name: 'confirmEmergency',
+          message: 'Confirm emergency sell mode? (Will sell 100% after buy)',
+          default: false
+        }
+      ]);
+      
+      if (!confirmEmergency) {
+        console.log(`${colors.yellow}⚠️ Emergency sell cancelled${colors.reset}`);
+        return;
+      }
     }
 
     // Initialize transaction progress monitor
@@ -6698,6 +6786,71 @@ async function handleBuyToken(wallet) {
       console.log(`${colors.blue}💰 Current Value: $${profitInfo.currentValue.toFixed(2)}${colors.reset}`);
     } catch (error) {
       console.log(`${colors.yellow}⚠️ Could not calculate profit (new token)${colors.reset}`);
+    }
+    
+    // Emergency sell logic
+    if (userAction === 'emergency_sell') {
+      console.log(`${colors.red}🚨 EXECUTING EMERGENCY SELL...${colors.reset}`);
+      
+      try {
+        // Wait a moment for the transaction to be confirmed
+        console.log(`${colors.yellow}⏳ Waiting for transaction confirmation...${colors.reset}`);
+        await new Promise(resolve => setTimeout(resolve, 3000));
+        
+        // Get current token balance
+        const currentBalance = await getTokenBalance(tokenMint, wallet.publicKey.toString());
+        console.log(`${colors.blue}💰 Current token balance: ${currentBalance.toLocaleString()}${colors.reset}`);
+        
+        if (currentBalance > 0) {
+          // Get sell quote
+          const sellQuote = await getBestQuote(
+            tokenMint,
+            'So11111111111111111111111111111111111111112', // SOL mint
+            currentBalance
+          );
+          
+          console.log(`${colors.cyan}📊 Sell Quote: ${currentBalance.toLocaleString()} tokens → ${sellQuote.outAmount / LAMPORTS_PER_SOL} SOL${colors.reset}`);
+          
+          // Initialize sell transaction progress monitor
+          const sellProgressMonitor = new TransactionProgressMonitor();
+          sellProgressMonitor.startTransaction('SELL', 'TOKEN', `${currentBalance.toLocaleString()} tokens`);
+          
+          // Simulate sell transaction steps
+          await sellProgressMonitor.simulateTransactionSteps('SELL', 'TOKEN', `${currentBalance.toLocaleString()} tokens`);
+          
+          // Perform emergency sell
+          const sellResult = await performSwap(
+            tokenMint,
+            'So11111111111111111111111111111111111111112',
+            currentBalance,
+            wallet
+          );
+          
+          // Complete sell transaction
+          sellProgressMonitor.completeTransaction(true, sellResult.signature);
+          
+          console.log(`${colors.green}✅ Emergency sell completed successfully!${colors.reset}`);
+          console.log(`${colors.blue}💰 Received: ${sellQuote.outAmount / LAMPORTS_PER_SOL} SOL${colors.reset}`);
+          
+          // Calculate total profit/loss
+          const totalSpent = amount;
+          const totalReceived = sellQuote.outAmount / LAMPORTS_PER_SOL;
+          const profitLoss = totalReceived - totalSpent;
+          const profitLossPercent = ((profitLoss / totalSpent) * 100);
+          
+          const profitColor = profitLoss >= 0 ? colors.green : colors.red;
+          const profitSymbol = profitLoss >= 0 ? '📈' : '📉';
+          
+          console.log(`${profitSymbol} ${profitColor}Total P&L: ${profitLoss.toFixed(4)} SOL (${profitLossPercent.toFixed(2)}%)${colors.reset}`);
+          
+        } else {
+          console.log(`${colors.red}❌ No tokens found to sell${colors.reset}`);
+        }
+        
+      } catch (error) {
+        console.error(`${colors.red}❌ Emergency sell failed: ${error.message}${colors.reset}`);
+        console.log(`${colors.yellow}⚠️ You may need to sell manually${colors.reset}`);
+      }
     }
 
   } catch (error) {
@@ -7270,6 +7423,439 @@ async function handleSellToken(wallet) {
 
   } catch (error) {
     console.error(`${colors.red}❌ Sell failed: ${error.message}${colors.reset}`);
+    
+    // Check if it's a routing error (token can't be sold)
+    if (error.message.includes('Could not find any route') || 
+        error.message.includes('ParseIntError') ||
+        error.message.includes('InvalidDigit')) {
+      
+      console.log(`${colors.yellow}💡 This token cannot be sold (no liquidity)${colors.reset}`);
+      console.log(`${colors.cyan}🔥 Would you like to burn these tokens instead?${colors.reset}`);
+      
+      const { burnInstead } = await inquirer.prompt([
+        {
+          type: 'confirm',
+          name: 'burnInstead',
+          message: 'Burn tokens to free up wallet space?',
+          default: true
+        }
+      ]);
+      
+      if (burnInstead) {
+        try {
+          console.log(`${colors.red}🔥 Burning tokens instead of selling...${colors.reset}`);
+          
+          // Initialize burn transaction progress monitor
+          const burnProgressMonitor = new TransactionProgressMonitor();
+          burnProgressMonitor.startTransaction('BURN', 'TOKEN', `${amountToSell.toLocaleString()} tokens`);
+          
+          // Simulate burn transaction steps
+          await burnProgressMonitor.simulateTransactionSteps('BURN', 'TOKEN', `${amountToSell.toLocaleString()} tokens`);
+          
+          // Perform burn
+          const burnResult = await burnTokens(tokenMint, amountToSell, wallet);
+          
+          // Complete burn transaction
+          burnProgressMonitor.completeTransaction(true, burnResult.signature);
+          
+          console.log(`${colors.green}✅ Tokens burned successfully!${colors.reset}`);
+          console.log(`${colors.blue}📝 Transaction: ${burnResult.signature}${colors.reset}`);
+          console.log(`${colors.yellow}💡 Wallet space freed up${colors.reset}`);
+        } catch (burnError) {
+          console.error(`${colors.red}❌ Burn failed: ${burnError.message}${colors.reset}`);
+        }
+      } else {
+        console.log(`${colors.yellow}⚠️ Tokens kept in wallet${colors.reset}`);
+      }
+    }
+  }
+
+  await waitForSpaceKey();
+}
+
+// EMERGENCY SELL FUNCTION - Quick 100% sell of any token
+async function handleEmergencySell(wallet) {
+  console.log(`${colors.red}🚨 EMERGENCY SELL MODE${colors.reset}`);
+  console.log(`${colors.yellow}⚠️ This will sell 100% of the specified token immediately${colors.reset}\n`);
+
+  try {
+    // Get all token balances
+    console.log(`${colors.cyan}🔍 Loading your tokens...${colors.reset}`);
+    const tokens = await getAllTokenBalances(wallet.publicKey.toString());
+    
+    let selectedToken;
+    let tokenMint;
+    let tokenBalance;
+    let tokenDecimals;
+    
+    if (tokens.length === 0) {
+      console.log(`${colors.yellow}⚠️ No tokens found in your wallet${colors.reset}`);
+      console.log(`${colors.cyan}💡 You can enter a custom token mint address${colors.reset}`);
+      
+      const { selectedOption } = await inquirer.prompt([
+        {
+          type: 'list',
+          name: 'selectedOption',
+          message: 'No tokens found in wallet. What would you like to do?',
+          choices: [
+            { name: 'Enter custom token mint address', value: 'custom' },
+            { name: 'Go back to main menu', value: 'back' }
+          ]
+        }
+      ]);
+      
+      if (selectedOption === 'back') {
+        return;
+      }
+      
+      selectedToken = 'custom';
+    } else {
+      // Display tokens with real-time data
+      console.log(`${colors.red}🚨 EMERGENCY SELL - Select token to sell 100%:${colors.reset}`);
+      console.log(`${colors.white}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${colors.reset}`);
+      
+      for (let i = 0; i < tokens.length; i++) {
+        const token = tokens[i];
+        try {
+          const tokenInfo = await getTokenInfo(token.mint);
+          const pnl = await calculateTokenPnL(token.mint, token.balance);
+          const pnlColor = pnl.pnlPercent >= 0 ? colors.green : colors.red;
+          const pnlSymbol = pnl.pnlPercent >= 0 ? '📈' : '📉';
+          
+          console.log(`${colors.cyan}${i + 1}.${colors.reset} ${colors.yellow}${tokenInfo.symbol}${colors.reset} (${token.mint.slice(0, 8)}...${token.mint.slice(-8)})`);
+          console.log(`   💰 Balance: ${token.balance.toLocaleString()}`);
+          console.log(`   💵 Value: $${pnl.currentValue.toFixed(2)}`);
+          console.log(`   ${pnlSymbol} PnL: ${pnlColor}$${pnl.pnl.toFixed(2)} (${pnl.pnlPercent.toFixed(2)}%)${colors.reset}`);
+          console.log('');
+        } catch (error) {
+          console.log(`${colors.cyan}${i + 1}.${colors.reset} ${colors.yellow}Unknown Token${colors.reset} (${token.mint.slice(0, 8)}...${token.mint.slice(-8)})`);
+          console.log(`   💰 Balance: ${token.balance.toLocaleString()}`);
+          console.log('');
+        }
+      }
+      
+      const { selectedOption } = await inquirer.prompt([
+        {
+          type: 'list',
+          name: 'selectedOption',
+          message: 'Select token to emergency sell (100%):',
+          choices: [
+            ...tokens.map((token, index) => ({
+              name: `${index + 1}. ${token.balance.toLocaleString()} tokens`,
+              value: index
+            })),
+            { name: 'Enter custom token mint address', value: 'custom' },
+            { name: 'Cancel', value: 'cancel' }
+          ]
+        }
+      ]);
+      
+      if (selectedOption === 'cancel') {
+        console.log(`${colors.yellow}⚠️ Emergency sell cancelled${colors.reset}`);
+        return;
+      }
+      
+      if (selectedOption === 'custom') {
+        selectedToken = 'custom';
+      } else {
+        selectedToken = tokens[selectedOption];
+      }
+    }
+
+    if (selectedToken === 'custom') {
+      // Custom token input
+      const { customMint } = await inquirer.prompt([
+        {
+          type: 'input',
+          name: 'customMint',
+          message: 'Enter token mint address:',
+          validate: (input) => input.length > 0 ? true : 'Token mint is required'
+        }
+      ]);
+      
+      tokenMint = customMint;
+      tokenBalance = await getTokenBalance(tokenMint, wallet.publicKey.toString());
+      const tokenMetadata = await getTokenMetadata(tokenMint);
+      tokenDecimals = tokenMetadata.decimals;
+    } else {
+      // Selected from list
+      tokenMint = selectedToken.mint;
+      tokenBalance = selectedToken.balance;
+      const tokenMetadata = await getTokenMetadata(tokenMint);
+      tokenDecimals = tokenMetadata.decimals;
+    }
+
+    console.log(`${colors.blue}💰 Token Balance: ${tokenBalance.toLocaleString()}${colors.reset}`);
+
+    if (tokenBalance <= 0) {
+      console.log(`${colors.red}❌ No tokens to sell${colors.reset}`);
+      await waitForSpaceKey();
+      return;
+    }
+
+    // Check if token can be sold first
+    console.log(`${colors.cyan}🔍 Checking if token can be sold...${colors.reset}`);
+    const canBeSold = await canTokenBeSold(tokenMint);
+    
+    if (!canBeSold) {
+      console.log(`${colors.red}❌ Token cannot be sold (no liquidity)${colors.reset}`);
+      console.log(`${colors.yellow}💡 Would you like to burn these tokens instead?${colors.reset}`);
+      
+      const { burnInstead } = await inquirer.prompt([
+        {
+          type: 'confirm',
+          name: 'burnInstead',
+          message: 'Burn tokens to free up wallet space?',
+          default: true
+        }
+      ]);
+      
+      if (burnInstead) {
+        console.log(`${colors.red}🔥 Burning tokens instead of selling...${colors.reset}`);
+        
+        // Initialize burn transaction progress monitor
+        const burnProgressMonitor = new TransactionProgressMonitor();
+        burnProgressMonitor.startTransaction('BURN', 'TOKEN', `${tokenBalance.toLocaleString()} tokens`);
+        
+        // Simulate burn transaction steps
+        await burnProgressMonitor.simulateTransactionSteps('BURN', 'TOKEN', `${tokenBalance.toLocaleString()} tokens`);
+        
+        // Perform burn
+        const burnResult = await burnTokens(tokenMint, tokenBalance, wallet);
+        
+        // Complete burn transaction
+        burnProgressMonitor.completeTransaction(true, burnResult.signature);
+        
+        console.log(`${colors.green}✅ Tokens burned successfully!${colors.reset}`);
+        console.log(`${colors.blue}📝 Transaction: ${burnResult.signature}${colors.reset}`);
+        console.log(`${colors.yellow}💡 Wallet space freed up${colors.reset}`);
+        
+        await waitForSpaceKey();
+        return;
+      } else {
+        console.log(`${colors.yellow}⚠️ Emergency sell cancelled${colors.reset}`);
+        await waitForSpaceKey();
+        return;
+      }
+    }
+
+    // Get sell quote for 100% of balance
+    console.log(`${colors.cyan}📊 Getting sell quote for 100% of tokens...${colors.reset}`);
+    const sellQuote = await getBestQuote(
+      tokenMint,
+      'So11111111111111111111111111111111111111112', // SOL mint
+      tokenBalance
+    );
+
+    console.log(`${colors.cyan}📊 Emergency Sell Quote:${colors.reset}`);
+    console.log(`${colors.red}🚨 Selling: ${tokenBalance.toLocaleString()} tokens${colors.reset}`);
+    console.log(`${colors.green}💰 Receiving: ${sellQuote.outAmount / LAMPORTS_PER_SOL} SOL${colors.reset}`);
+
+    // Final confirmation
+    const { confirm } = await inquirer.prompt([
+      {
+        type: 'confirm',
+        name: 'confirm',
+        message: `🚨 CONFIRM EMERGENCY SELL: Sell 100% (${tokenBalance.toLocaleString()} tokens) for ${sellQuote.outAmount / LAMPORTS_PER_SOL} SOL?`,
+        default: false
+      }
+    ]);
+
+    if (!confirm) {
+      console.log(`${colors.yellow}⚠️ Emergency sell cancelled${colors.reset}`);
+      await waitForSpaceKey();
+      return;
+    }
+
+    // Initialize emergency sell transaction progress monitor
+    const progressMonitor = new TransactionProgressMonitor();
+    progressMonitor.startTransaction('EMERGENCY_SELL', 'TOKEN', `${tokenBalance.toLocaleString()} tokens`);
+    
+    // Simulate emergency sell transaction steps
+    await progressMonitor.simulateTransactionSteps('EMERGENCY_SELL', 'TOKEN', `${tokenBalance.toLocaleString()} tokens`);
+    
+    // Perform emergency sell
+    const result = await performSwap(
+      tokenMint,
+      'So11111111111111111111111111111111111111112',
+      tokenBalance,
+      wallet
+    );
+
+    // Complete emergency sell transaction
+    progressMonitor.completeTransaction(true, result.signature);
+    
+    console.log(`${colors.green}✅ EMERGENCY SELL COMPLETED!${colors.reset}`);
+    console.log(`${colors.blue}💰 Received: ${sellQuote.outAmount / LAMPORTS_PER_SOL} SOL${colors.reset}`);
+    console.log(`${colors.blue}📝 Transaction: ${result.signature}${colors.reset}`);
+
+    // Calculate and display profit/loss
+    try {
+      const profitInfo = await calculateAndDisplayProfit(tokenMint, tokenBalance, tokenDecimals);
+      console.log(`${profitInfo.symbol} ${profitInfo.color}Final P&L: ${profitInfo.percentage.toFixed(2)}%${colors.reset}`);
+    } catch (error) {
+      console.log(`${colors.yellow}⚠️ Could not calculate final P&L${colors.reset}`);
+    }
+
+  } catch (error) {
+    console.error(`${colors.red}❌ Emergency sell failed: ${error.message}${colors.reset}`);
+  }
+
+  await waitForSpaceKey();
+}
+
+// BURN TOKENS FUNCTION - Burn unwanted tokens
+async function handleBurnTokens(wallet) {
+  console.log(`${colors.red}🔥 BURN TOKENS MODE${colors.reset}`);
+  console.log(`${colors.yellow}⚠️ This will permanently burn tokens to free up wallet space${colors.reset}\n`);
+
+  try {
+    // Get all token balances
+    console.log(`${colors.cyan}🔍 Loading your tokens...${colors.reset}`);
+    const tokens = await getAllTokenBalances(wallet.publicKey.toString());
+    
+    if (tokens.length === 0) {
+      console.log(`${colors.yellow}⚠️ No tokens found in your wallet${colors.reset}`);
+      await waitForSpaceKey();
+      return;
+    }
+
+    // Display tokens with real-time data
+    console.log(`${colors.red}🔥 BURN TOKENS - Select token to burn:${colors.reset}`);
+    console.log(`${colors.white}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${colors.reset}`);
+    
+    for (let i = 0; i < tokens.length; i++) {
+      const token = tokens[i];
+      try {
+        const tokenInfo = await getTokenInfo(token.mint);
+        const pnl = await calculateTokenPnL(token.mint, token.balance);
+        const pnlColor = pnl.pnlPercent >= 0 ? colors.green : colors.red;
+        const pnlSymbol = pnl.pnlPercent >= 0 ? '📈' : '📉';
+        
+        console.log(`${colors.cyan}${i + 1}.${colors.reset} ${colors.yellow}${tokenInfo.symbol}${colors.reset} (${token.mint.slice(0, 8)}...${token.mint.slice(-8)})`);
+        console.log(`   💰 Balance: ${token.balance.toLocaleString()}`);
+        console.log(`   💵 Value: $${pnl.currentValue.toFixed(2)}`);
+        console.log(`   ${pnlSymbol} PnL: ${pnlColor}$${pnl.pnl.toFixed(2)} (${pnl.pnlPercent.toFixed(2)}%)${colors.reset}`);
+        console.log('');
+      } catch (error) {
+        console.log(`${colors.cyan}${i + 1}.${colors.reset} ${colors.yellow}Unknown Token${colors.reset} (${token.mint.slice(0, 8)}...${token.mint.slice(-8)})`);
+        console.log(`   💰 Balance: ${token.balance.toLocaleString()}`);
+        console.log('');
+      }
+    }
+    
+    const { selectedOption } = await inquirer.prompt([
+      {
+        type: 'list',
+        name: 'selectedOption',
+        message: 'Select token to burn:',
+        choices: [
+          ...tokens.map((token, index) => ({
+            name: `${index + 1}. ${token.balance.toLocaleString()} tokens`,
+            value: index
+          })),
+          { name: 'Enter custom token mint address', value: 'custom' },
+          { name: 'Cancel', value: 'cancel' }
+        ]
+      }
+    ]);
+    
+    if (selectedOption === 'cancel') {
+      console.log(`${colors.yellow}⚠️ Burn cancelled${colors.reset}`);
+      return;
+    }
+    
+    let tokenMint;
+    let tokenBalance;
+    let tokenDecimals;
+    
+    if (selectedOption === 'custom') {
+      // Custom token input
+      const { customMint } = await inquirer.prompt([
+        {
+          type: 'input',
+          name: 'customMint',
+          message: 'Enter token mint address:',
+          validate: (input) => input.length > 0 ? true : 'Token mint is required'
+        }
+      ]);
+      
+      tokenMint = customMint;
+      tokenBalance = await getTokenBalance(tokenMint, wallet.publicKey.toString());
+      const tokenMetadata = await getTokenMetadata(tokenMint);
+      tokenDecimals = tokenMetadata.decimals;
+    } else {
+      // Selected from list
+      const selectedToken = tokens[selectedOption];
+      tokenMint = selectedToken.mint;
+      tokenBalance = selectedToken.balance;
+      const tokenMetadata = await getTokenMetadata(tokenMint);
+      tokenDecimals = tokenMetadata.decimals;
+    }
+
+    console.log(`${colors.blue}💰 Token Balance: ${tokenBalance.toLocaleString()}${colors.reset}`);
+
+    if (tokenBalance <= 0) {
+      console.log(`${colors.red}❌ No tokens to burn${colors.reset}`);
+      await waitForSpaceKey();
+      return;
+    }
+
+    // Get burn amount
+    const { burnAmount } = await inquirer.prompt([
+      {
+        type: 'input',
+        name: 'burnAmount',
+        message: `Enter amount to burn (max: ${tokenBalance.toLocaleString()}):`,
+        validate: (input) => {
+          const num = parseFloat(input);
+          if (isNaN(num)) return 'Please enter a valid number';
+          if (num <= 0) return 'Amount must be greater than 0';
+          if (num > tokenBalance) return `Amount cannot exceed balance (${tokenBalance.toLocaleString()})`;
+          return true;
+        },
+        filter: (input) => parseFloat(input)
+      }
+    ]);
+
+    // Convert to smallest units
+    const amountToBurn = Math.floor(burnAmount * Math.pow(10, tokenDecimals));
+
+    // Final confirmation
+    const { confirm } = await inquirer.prompt([
+      {
+        type: 'confirm',
+        name: 'confirm',
+        message: `🔥 CONFIRM BURN: Burn ${burnAmount.toLocaleString()} tokens? (This action is irreversible!)`,
+        default: false
+      }
+    ]);
+
+    if (!confirm) {
+      console.log(`${colors.yellow}⚠️ Burn cancelled${colors.reset}`);
+      await waitForSpaceKey();
+      return;
+    }
+
+    // Initialize burn transaction progress monitor
+    const progressMonitor = new TransactionProgressMonitor();
+    progressMonitor.startTransaction('BURN', 'TOKEN', `${burnAmount.toLocaleString()} tokens`);
+    
+    // Simulate burn transaction steps
+    await progressMonitor.simulateTransactionSteps('BURN', 'TOKEN', `${burnAmount.toLocaleString()} tokens`);
+    
+    // Perform burn
+    const result = await burnTokens(tokenMint, amountToBurn, wallet);
+
+    // Complete burn transaction
+    progressMonitor.completeTransaction(true, result.signature);
+    
+    console.log(`${colors.green}✅ Tokens burned successfully!${colors.reset}`);
+    console.log(`${colors.blue}📝 Transaction: ${result.signature}${colors.reset}`);
+    console.log(`${colors.yellow}💡 Wallet space freed up${colors.reset}`);
+
+  } catch (error) {
+    console.error(`${colors.red}❌ Burn failed: ${error.message}${colors.reset}`);
   }
 
   await waitForSpaceKey();

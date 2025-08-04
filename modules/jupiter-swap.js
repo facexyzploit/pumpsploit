@@ -565,4 +565,107 @@ export async function getSwapHistory(walletAddress, limit = 10) {
     console.error(`${colors.red}❌ Error getting swap history: ${error.message}${colors.reset}`);
     return [];
   }
+}
+
+/**
+ * Burn tokens (send to burn address)
+ * @param {string} mintAddress - Token mint address
+ * @param {number} amount - Amount to burn (in smallest units)
+ * @param {Object} wallet - Wallet keypair
+ * @returns {Promise<Object>} Burn transaction result
+ */
+export async function burnTokens(mintAddress, amount, wallet) {
+  try {
+    console.log(`${colors.red}🔥 Burning ${amount.toLocaleString()} tokens...${colors.reset}`);
+    
+    // Create connection
+    const connection = new Connection(getRpcEndpoint());
+    
+    // Create burn address (dead wallet)
+    const burnAddress = new PublicKey('11111111111111111111111111111112'); // System Program burn address
+    
+    // Get token account info
+    const tokenMint = new PublicKey(mintAddress);
+    const userTokenAccount = await connection.getTokenAccountsByOwner(wallet.publicKey, {
+      mint: tokenMint
+    });
+    
+    if (userTokenAccount.value.length === 0) {
+      throw new Error('No token account found for this mint');
+    }
+    
+    const userTokenAccountAddress = userTokenAccount.value[0].pubkey;
+    
+    // Create transaction
+    const transaction = new Transaction();
+    
+    // Add transfer instruction to burn address
+    const transferInstruction = {
+      programId: TOKEN_PROGRAM_ID,
+      keys: [
+        { pubkey: userTokenAccountAddress, isSigner: false, isWritable: true },
+        { pubkey: burnAddress, isSigner: false, isWritable: true },
+        { pubkey: wallet.publicKey, isSigner: true, isWritable: false }
+      ],
+      data: Buffer.from([
+        3, // Transfer instruction
+        ...new Uint8Array(new Uint8Array(amount.toString().padStart(8, '0').split('').map(Number)))
+      ])
+    };
+    
+    transaction.add(transferInstruction);
+    
+    // Get recent blockhash
+    const { blockhash } = await connection.getLatestBlockhash();
+    transaction.recentBlockhash = blockhash;
+    transaction.feePayer = wallet.publicKey;
+    
+    // Sign and send transaction
+    transaction.sign(wallet);
+    const signature = await connection.sendRawTransaction(transaction.serialize());
+    
+    // Wait for confirmation
+    const confirmation = await connection.confirmTransaction(signature);
+    
+    if (confirmation.value.err) {
+      throw new Error(`Transaction failed: ${confirmation.value.err}`);
+    }
+    
+    console.log(`${colors.green}✅ Tokens burned successfully!${colors.reset}`);
+    console.log(`${colors.blue}📝 Transaction: ${signature}${colors.reset}`);
+    
+    return {
+      success: true,
+      signature: signature,
+      amount: amount
+    };
+    
+  } catch (error) {
+    console.error(`${colors.red}❌ Error burning tokens: ${error.message}${colors.reset}`);
+    logToFile(`Token burn error: ${error.message}`, 'error');
+    throw error;
+  }
+}
+
+/**
+ * Check if token can be sold (has liquidity)
+ * @param {string} mintAddress - Token mint address
+ * @returns {Promise<boolean>} True if token can be sold
+ */
+export async function canTokenBeSold(mintAddress) {
+  try {
+    // Try to get a quote for selling a small amount
+    const testAmount = 1000; // Small test amount
+    
+    const quote = await getBestQuote(
+      mintAddress,
+      'So11111111111111111111111111111111111111112', // SOL
+      testAmount
+    );
+    
+    return quote && quote.outAmount > 0;
+  } catch (error) {
+    // If we can't get a quote, the token probably can't be sold
+    return false;
+  }
 } 
