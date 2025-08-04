@@ -42,9 +42,10 @@ export class SettingsManager {
       // New trading settings
       customRpcEndpoint: 'https://api.mainnet-beta.solana.com',
       slippageLimit: 0.5,
-      priorityFee: 1000, // Reduced from 5000 to 1000 micro-lamports
-      tipAmount: 0.0001, // Reduced from 0.001 to 0.0001 SOL
-      enableCustomRpc: false
+                              priorityFee: 500, // Reduced from 1000 to 500 micro-lamports
+            tipAmount: 0.0001, // Reduced from 0.001 to 0.0001 SOL
+            enableUltraV2: true, // Enable Jupiter Ultra V2 by default
+            enableCustomRpc: false
     };
   }
 

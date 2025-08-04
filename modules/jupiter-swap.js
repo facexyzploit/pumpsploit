@@ -9,7 +9,11 @@ import { SettingsManager } from './settings-manager.js';
 // Jupiter API endpoints
 const JUPITER_QUOTE_API = 'https://quote-api.jup.ag/v6/quote';
 const JUPITER_SWAP_API = 'https://quote-api.jup.ag/v6/swap';
-const JUPITER_SWAP_TRANSACTION_API = 'https://lite-api.jup.ag/swap/v1/swap';
+const JUPITER_SWAP_TRANSACTION_API = 'https://quote-api.jup.ag/v6/swap';
+
+// Ultra V2 API endpoints
+const ULTRA_V2_QUOTE_API = 'https://quote-api.jup.ag/v6/quote';
+const ULTRA_V2_SWAP_API = 'https://quote-api.jup.ag/v6/swap';
 
 // Settings manager
 const settingsManager = new SettingsManager();
@@ -22,13 +26,14 @@ export function getRpcEndpoint() {
 }
 
 /**
- * Get the best quote for a swap
+ * Get Ultra V2 quote with RTSE (Real-Time Slippage Estimation)
  * @param {string} fromMint - Source token mint address
  * @param {string} toMint - Destination token mint address  
  * @param {number} amount - Amount to swap (in smallest units)
+ * @param {boolean} useUltraV2 - Whether to use Ultra V2 features
  * @returns {Promise<Object>} Quote information
  */
-export async function getBestQuote(fromMint, toMint, amount) {
+export async function getBestQuote(fromMint, toMint, amount, useUltraV2 = true) {
   try {
     console.log(`${colors.cyan}🔍 Getting best quote...${colors.reset}`);
     
@@ -36,17 +41,23 @@ export async function getBestQuote(fromMint, toMint, amount) {
     const slippageLimit = settingsManager.get('slippageLimit') || 0.5;
     const slippageBps = Math.floor(slippageLimit * 100); // Convert % to basis points
     
+    // Ultra V2 parameters
     const params = new URLSearchParams({
       inputMint: fromMint,
       outputMint: toMint,
       amount: amount.toString(),
       slippageBps: slippageBps.toString(),
       onlyDirectRoutes: 'false',
-      asLegacyTransaction: 'false',
-      // v6 specific parameters
-      maxAccounts: '64',
-      maxSplit: '3'
+      asLegacyTransaction: 'false'
     });
+    
+    // Add Ultra V2 specific parameters
+    if (useUltraV2) {
+      params.append('enableUltraV2', 'true');
+      params.append('enableRTSE', 'true'); // Real-Time Slippage Estimation
+      params.append('enableGasless', 'true'); // Gasless support
+      console.log(`${colors.cyan}🚀 Using Jupiter Ultra V2 with RTSE${colors.reset}`);
+    }
 
     const response = await fetch(`${JUPITER_QUOTE_API}?${params}`, {
       method: 'GET',
@@ -80,35 +91,48 @@ export async function getBestQuote(fromMint, toMint, amount) {
 }
 
 /**
- * Get swap transaction
+ * Get Ultra V2 swap transaction with optimized settings
  * @param {Object} route - Quote route from getBestQuote
  * @param {string} userPublicKey - User's public key
+ * @param {boolean} useUltraV2 - Whether to use Ultra V2 features
  * @returns {Promise<Object>} Transaction data
  */
-export async function getSwapTransaction(route, userPublicKey) {
+export async function getSwapTransaction(route, userPublicKey, useUltraV2 = true) {
   try {
     console.log(`${colors.cyan}🔧 Building swap transaction...${colors.reset}`);
     
     // Get priority fee for the transaction
     const priorityFee = settingsManager.get('priorityFee') || 1000;
     
+    // Ultra V2 optimized request body
+    const requestBody = {
+      quoteResponse: route,
+      userPublicKey: userPublicKey,
+      wrapUnwrapSOL: true
+    };
+    
+    if (useUltraV2) {
+      // Ultra V2 specific settings
+      requestBody.ultraV2Settings = {
+        enableRTSE: true,
+        enableGasless: true,
+        enableMEVMitigation: true,
+        optimizeForSuccess: true
+      };
+      console.log(`${colors.cyan}🚀 Using Ultra V2 optimized settings${colors.reset}`);
+    } else {
+      // Standard v6 parameters
+      requestBody.computeUnitPriceMicroLamports = priorityFee;
+      requestBody.useSharedAccounts = true;
+      requestBody.useTokenLedger = true;
+    }
+    
     const response = await fetch(JUPITER_SWAP_TRANSACTION_API, {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json'
+        'Content-Type': 'application/json'
       },
-      body: JSON.stringify({
-        userPublicKey: userPublicKey,
-        quoteResponse: route,
-        prioritizationFeeLamports: {
-          priorityLevelWithMaxLamports: {
-            maxLamports: priorityFee * 1000, // Convert to lamports
-            priorityLevel: "veryHigh"
-          }
-        },
-        dynamicComputeUnitLimit: true
-      })
+      body: JSON.stringify(requestBody)
     });
 
     if (!response.ok) {
@@ -131,15 +155,16 @@ export async function getSwapTransaction(route, userPublicKey) {
 }
 
 /**
- * Perform a swap
+ * Perform Ultra V2 swap with optimized success rate
  * @param {string} fromMint - Source token mint address
  * @param {string} toMint - Destination token mint address
  * @param {number} amount - Amount to swap
  * @param {Object} wallet - Wallet object with keypair
  * @param {number} slippage - Slippage tolerance in basis points (default: 50 = 0.5%)
+ * @param {boolean} useUltraV2 - Whether to use Ultra V2 features
  * @returns {Promise<Object>} Swap result
  */
-export async function performSwap(fromMint, toMint, amount, wallet, slippage = null) {
+export async function performSwap(fromMint, toMint, amount, wallet, slippage = null, useUltraV2 = true) {
   try {
     console.log(`${colors.cyan}🚀 Starting swap...${colors.reset}`);
     console.log(`${colors.yellow}From: ${fromMint}${colors.reset}`);
@@ -149,8 +174,8 @@ export async function performSwap(fromMint, toMint, amount, wallet, slippage = n
     // Get settings
     const slippageLimit = slippage !== null ? slippage : settingsManager.get('slippageLimit') || 0.5;
     
-    // Use higher priority fee for better transaction success
-    let priorityFee = settingsManager.get('priorityFee') || 5000; // Higher default for Lite API
+    // Use moderate priority fee for stability
+    let priorityFee = settingsManager.get('priorityFee') || 1000; // Moderate default
     try {
       const connection = new Connection(getRpcEndpoint());
       const recentPrioritizationFees = await connection.getRecentPrioritizationFees([
@@ -158,9 +183,9 @@ export async function performSwap(fromMint, toMint, amount, wallet, slippage = n
       ]);
       
       if (recentPrioritizationFees.length > 0) {
-        // Use higher fee for better success rate with Lite API
+        // Use moderate fee for stability
         const avgFee = recentPrioritizationFees.reduce((sum, fee) => sum + fee.prioritizationFee, 0) / recentPrioritizationFees.length;
-        priorityFee = Math.max(avgFee * 2, 2000); // 2x average fee, minimum 2000
+        priorityFee = Math.max(avgFee, 500); // Use average fee, minimum 500
         console.log(`${colors.cyan}🔍 Auto-detected priority fee: ${priorityFee} micro-lamports${colors.reset}`);
       } else {
         console.log(`${colors.yellow}⚠️ Using default priority fee: ${priorityFee} micro-lamports${colors.reset}`);
@@ -177,11 +202,11 @@ export async function performSwap(fromMint, toMint, amount, wallet, slippage = n
     console.log(`${colors.yellow}Tip Amount: ${tipAmount} SOL${colors.reset}`);
     console.log(`${colors.yellow}RPC: ${rpcEndpoint}${colors.reset}`);
 
-    // Get the best quote
-    const quote = await getBestQuote(fromMint, toMint, amount);
+    // Get the best quote with Ultra V2
+    const quote = await getBestQuote(fromMint, toMint, amount, useUltraV2);
     
-    // Get swap transaction - wallet is a Keypair object
-    const swapData = await getSwapTransaction(quote, wallet.publicKey.toString());
+    // Get swap transaction with Ultra V2 - wallet is a Keypair object
+    const swapData = await getSwapTransaction(quote, wallet.publicKey.toString(), useUltraV2);
     
     // Sign and send transaction
     const connection = new Connection(rpcEndpoint);
@@ -195,12 +220,10 @@ export async function performSwap(fromMint, toMint, amount, wallet, slippage = n
       // Sign versioned transaction - wallet is the keypair itself
       transaction.sign([wallet]);
       
-      // Send versioned transaction with v6 optimized settings
+      // Send versioned transaction with simple settings
       const signature = await connection.sendTransaction(transaction, {
         skipPreflight: false,
-        preflightCommitment: 'confirmed',
-        maxRetries: 3,
-        minContextSlot: await connection.getSlot()
+        preflightCommitment: 'confirmed'
       });
       
       console.log(`${colors.green}✅ Swap transaction sent!${colors.reset}`);
@@ -230,11 +253,10 @@ export async function performSwap(fromMint, toMint, amount, wallet, slippage = n
         // Sign legacy transaction - wallet is the keypair itself
         transaction.sign(wallet);
         
-        // Send legacy transaction (fallback for v6)
+        // Send legacy transaction (fallback)
         const signature = await connection.sendRawTransaction(transaction.serialize(), {
           skipPreflight: false,
-          preflightCommitment: 'confirmed',
-          maxRetries: 3
+          preflightCommitment: 'confirmed'
         });
         
         console.log(`${colors.green}✅ Swap transaction sent!${colors.reset}`);

@@ -122,7 +122,7 @@ function waitForBackOrSpaceKey() {
 function addBackOption(choices, backText = 'Back to Main Menu') {
   return [
     ...choices,
-    { name: `${colors.white}[SPACE]${colors.reset} ${colors.yellow}⬅️ ${backText}${colors.reset}`, value: 'back' }
+    { name: `${colors.yellow}⬅️ ${backText}${colors.reset}`, value: 'back' }
   ];
 }
 
@@ -1595,9 +1595,10 @@ let settings = {
   // RPC Settings for Buy/Sell
   customRpcEndpoint: 'https://api.mainnet-beta.solana.com',
   enableCustomRpc: false,
-  priorityFee: 1000, // Reduced from 5000 to 1000 micro-lamports
-  slippageLimit: 0.5,
-  tipAmount: 0.0001 // Reduced from 0.001 to 0.0001 SOL
+          priorityFee: 1000, // Reduced from 5000 to 1000 micro-lamports
+        slippageLimit: 0.5,
+        tipAmount: 0.0001, // Reduced from 0.001 to 0.0001 SOL
+        enableUltraV2: true // Enable Jupiter Ultra V2 by default
 };
 function loadSettings() {
   if (fs.existsSync(settingsFile)) {
@@ -1730,6 +1731,7 @@ async function showRpcSettingsMenu() {
           { name: '⚡ Priority Fee', value: 'priorityFee' },
           { name: '📊 Slippage Limit', value: 'slippage' },
           { name: '💸 Tip Amount', value: 'tipAmount' },
+          { name: '🚀 Jupiter Ultra V2', value: 'ultraV2' },
           { name: '🔄 Enable Custom RPC', value: 'enableCustom' },
           { name: '📋 View Current RPC Settings', value: 'viewRpc' }
         ])
@@ -1824,6 +1826,21 @@ async function showRpcSettingsMenu() {
         break;
       }
       
+      case 'ultraV2': {
+        const { enableUltraV2 } = await inquirer.prompt([
+          {
+            type: 'confirm',
+            name: 'enableUltraV2',
+            message: 'Enable Jupiter Ultra V2 for better transaction success rate?',
+            default: settings.enableUltraV2 !== false
+          }
+        ]);
+        settings.enableUltraV2 = enableUltraV2;
+        saveSettings();
+        console.log(chalk.green(`Jupiter Ultra V2 ${enableUltraV2 ? 'enabled' : 'disabled'}.`));
+        break;
+      }
+      
       case 'enableCustom': {
         const { enableCustom } = await inquirer.prompt([
           {
@@ -1847,6 +1864,7 @@ async function showRpcSettingsMenu() {
         console.log(`${colors.cyan}Priority Fee:${colors.reset} ${settings.priorityFee || 1000} micro-lamports`);
         console.log(`${colors.cyan}Slippage Limit:${colors.reset} ${settings.slippageLimit || 0.5}%`);
         console.log(`${colors.cyan}Tip Amount:${colors.reset} ${settings.tipAmount || 0.0001} SOL`);
+        console.log(`${colors.cyan}Jupiter Ultra V2:${colors.reset} ${settings.enableUltraV2 !== false ? 'Enabled' : 'Disabled'}`);
         console.log(`\n${colors.yellow}Press Enter to continue...${colors.reset}`);
         await new Promise(resolve => {
           const originalRawMode = process.stdin.isRaw;
@@ -3289,7 +3307,7 @@ async function aiToolsMenu() {
           { name: '📈 AI Market Analysis', value: 'ai_market' },
           { name: '⚡ AI Quick Analysis', value: 'ai_quick' },
           { name: '⚙️ AI Settings', value: 'ai_settings' },
-          { name: `${colors.white}[SPACE]${colors.reset} ${colors.yellow}⬅️ Back to Main Menu${colors.reset}`, value: 'back' }
+          { name: `${colors.yellow}⬅️ Back to Main Menu${colors.reset}`, value: 'back' }
         ]
       }
     ]);
@@ -4588,8 +4606,8 @@ async function walletManagerMenu() {
           { name: 'Export Wallet Keypair', value: 'export' },
           { name: 'List Wallets', value: 'list' },
           { name: 'Check Balance', value: 'balance' },
-          { name: '🔧 Advanced Wallet Tools', value: 'advanced' },
-          { name: `${colors.white}[SPACE]${colors.reset} ${colors.yellow}⬅️ Back to Main Menu${colors.reset}`, value: 'back' }
+          { name: 'Advanced Wallet Tools', value: 'advanced' },
+          { name: `${colors.yellow}Back to Main Menu${colors.reset}`, value: 'back' }
         ]
       }
     ]);
@@ -5300,15 +5318,15 @@ async function jupiterAnalysisMenu() {
         name: 'action',
         message: 'Jupiter Token Analysis:',
         choices: [
-          { name: '🤖 AI-Powered Token Analysis', value: 'ai_analysis' },
-          { name: '🤖 AI Batch Analysis', value: 'ai_batch' },
-          { name: '🤖 AI Token Scanner', value: 'ai_scanner' },
+          { name: 'AI-Powered Token Analysis', value: 'ai_analysis' },
+          { name: 'AI Batch Analysis', value: 'ai_batch' },
+          { name: 'AI Token Scanner', value: 'ai_scanner' },
           { name: 'Analyze Single Token', value: 'single' },
           { name: 'Batch Token Analysis', value: 'batch' },
           { name: 'Trading Decision Maker', value: 'decision' },
           { name: 'Risk Assessment Tool', value: 'risk' },
           { name: 'Real-time Token Monitor', value: 'realtime' },
-          { name: `${colors.white}[SPACE]${colors.reset} ${colors.yellow}⬅️ Back to Main Menu${colors.reset}`, value: 'back' }
+          { name: `${colors.yellow}Back to Main Menu${colors.reset}`, value: 'back' }
         ]
       }
     ]);
@@ -7151,82 +7169,17 @@ async function handleSellToken(wallet) {
         console.log('');
       }
       
-      // Set up hotkey handling for refresh
-      const handleRefreshHotkeys = () => {
-        return new Promise((resolve) => {
-          const originalRawMode = process.stdin.isRaw;
-          const originalEncoding = process.stdin.encoding;
-          
-          process.stdin.setRawMode(true);
-          process.stdin.resume();
-          process.stdin.setEncoding('utf8');
-          
-          const onData = (data) => {
-            const key = data.toLowerCase();
-            if (key === 'r') {
-              // Refresh data
-              process.stdin.setRawMode(false);
-              process.stdin.pause();
-              process.stdin.setRawMode(originalRawMode);
-              process.stdin.setEncoding(originalEncoding);
-              process.stdin.removeListener('data', onData);
-              resolve('refresh');
-            } else if (key === 'j') {
-              // Show Jupiter prices
-              process.stdin.setRawMode(false);
-              process.stdin.pause();
-              process.stdin.setRawMode(originalRawMode);
-              process.stdin.setEncoding(originalEncoding);
-              process.stdin.removeListener('data', onData);
-              resolve('jupiter');
-            } else if (key === ' ') {
-              // Continue
-              process.stdin.setRawMode(false);
-              process.stdin.pause();
-              process.stdin.setRawMode(originalRawMode);
-              process.stdin.setEncoding(originalEncoding);
-              process.stdin.removeListener('data', onData);
-              resolve('continue');
-            }
-          };
-          
-          process.stdin.on('data', onData);
-          
-          // Auto-resolve after 5 seconds
-          setTimeout(() => {
-            process.stdin.setRawMode(false);
-            process.stdin.pause();
-            process.stdin.setRawMode(originalRawMode);
-            process.stdin.setEncoding(originalEncoding);
-            process.stdin.removeListener('data', onData);
-            resolve('continue');
-          }, 5000);
-        });
-      };
-      
-      // Wait for user input or hotkeys
-      const hotkeyResult = await handleRefreshHotkeys();
-      
-      if (hotkeyResult === 'refresh') {
-        console.log(`${colors.yellow}🔄 Refreshing token data...${colors.reset}`);
-        // Refresh tokens data
-        const refreshedTokens = await getQuickTokenDisplay(wallet.publicKey.toString());
-        console.log(`${colors.green}✅ Token data refreshed${colors.reset}`);
-      } else if (hotkeyResult === 'jupiter') {
-        console.log(`${colors.cyan}🌌 Jupiter prices feature not available in this mode${colors.reset}`);
-      }
-      
-      // Create enhanced token choices with real-time data
+      // Create simple token choices
       const tokenChoices = tokens.map((token, index) => ({
         name: `${index + 1}. ${token.symbol} (${token.shortMint}) - Balance: ${token.balance.toLocaleString()}`,
         value: token
       }));
 
-      // Add option to enter custom token mint
-      tokenChoices.push({
-        name: `${tokens.length + 1}. Enter custom token mint address`,
-        value: 'custom'
-      });
+      // Add options
+      tokenChoices.push(
+        { name: `${tokens.length + 1}. Enter custom token mint address`, value: 'custom' },
+        { name: `${tokens.length + 2}. Back to main menu`, value: 'back' }
+      );
 
       const { selectedOption } = await inquirer.prompt([
         {
@@ -7236,6 +7189,10 @@ async function handleSellToken(wallet) {
           choices: tokenChoices
         }
       ]);
+      
+      if (selectedOption === 'back') {
+        return;
+      }
       
       selectedToken = selectedOption;
     }
@@ -7825,18 +7782,18 @@ async function handleEmergencySell(wallet) {
     // Convert actualSellAmount to atomic units for the swap
     const atomicSellAmount = Math.floor(actualSellAmount * (10 ** tokenDecimals));
     
-    // Auto-detect optimal priority fee for emergency sell
-    let optimalPriorityFee = 5000; // Higher default for emergency sells
+        // Auto-detect optimal priority fee for emergency sell
+    let optimalPriorityFee = 1000; // Moderate default for emergency sells
     try {
       const connection = new Connection(getRpcEndpoint());
       const recentPrioritizationFees = await connection.getRecentPrioritizationFees([
         new PublicKey('JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4') // Jupiter program
       ]);
-      
+
       if (recentPrioritizationFees.length > 0) {
-        // Use a higher fee for emergency sells to ensure success
+        // Use moderate fee for emergency sells
         const avgFee = recentPrioritizationFees.reduce((sum, fee) => sum + fee.prioritizationFee, 0) / recentPrioritizationFees.length;
-        optimalPriorityFee = Math.max(avgFee * 1.5, 2000); // 1.5x average fee, minimum 2000
+        optimalPriorityFee = Math.max(avgFee, 500); // Use average fee, minimum 500
         console.log(`${colors.cyan}🔍 Auto-detected optimal priority fee: ${optimalPriorityFee} micro-lamports${colors.reset}`);
       }
     } catch (error) {
@@ -7867,12 +7824,15 @@ async function handleEmergencySell(wallet) {
         const originalPriorityFee = settingsManager.get('priorityFee');
         settingsManager.set('priorityFee', optimalPriorityFee);
         
+        // Use Ultra V2 for emergency sells
+        const useUltraV2 = settingsManager.get('enableUltraV2') !== false; // Default to true
         result = await performSwap(
           tokenMint,
           'So11111111111111111111111111111111111111112',
           atomicSellAmount, // Use atomic amount for the swap
           wallet,
-          successfulSlippage // Use the slippage that worked for the quote
+          successfulSlippage, // Use the slippage that worked for the quote
+          useUltraV2 // Enable Ultra V2 for better success rate
         );
         
         // Restore original priority fee
