@@ -353,7 +353,7 @@ export async function performSwap(fromMint, toMint, amount, wallet, slippage = n
 }
 
 /**
- * Perform swap using Jupiter Lite API (more reliable for emergency sells)
+ * Perform swap using Jupiter Lite API with automatic retry for low liquidity tokens
  * @param {string} fromMint - Source token mint address
  * @param {string} toMint - Destination token mint address
  * @param {number} amount - Amount to swap
@@ -465,7 +465,45 @@ export async function performLiteSwap(fromMint, toMint, amount, wallet, slippage
     };
     
   } catch (error) {
-    console.error(`${colors.red}❌ Lite swap failed: ${error.message}${colors.reset}`);
+    // Check for specific Jupiter errors that indicate low liquidity
+    const errorMessage = error.message.toLowerCase();
+    const isLowLiquidityError = errorMessage.includes('0x1788') || 
+                                errorMessage.includes('insufficient liquidity') ||
+                                errorMessage.includes('slippage exceeded') ||
+                                errorMessage.includes('price impact too high');
+    
+    if (isLowLiquidityError) {
+      console.log(`${colors.yellow}⚠️ Low liquidity detected. Trying with smaller amount...${colors.reset}`);
+      
+      // Try with 50% of the original amount
+      const smallerAmount = Math.floor(amount * 0.5);
+      
+      if (smallerAmount > 0) {
+        try {
+          console.log(`${colors.cyan}🔄 Retrying with ${smallerAmount.toLocaleString()} tokens (50% of original)${colors.reset}`);
+          return await performLiteSwap(fromMint, toMint, smallerAmount, wallet, slippage, priorityLevel);
+        } catch (retryError) {
+          // If 50% still fails, try with 25%
+          const evenSmallerAmount = Math.floor(amount * 0.25);
+          
+          if (evenSmallerAmount > 0) {
+            console.log(`${colors.cyan}🔄 Retrying with ${evenSmallerAmount.toLocaleString()} tokens (25% of original)${colors.reset}`);
+            return await performLiteSwap(fromMint, toMint, evenSmallerAmount, wallet, slippage, priorityLevel);
+          }
+        }
+      }
+      
+      // If all retries fail, provide helpful error message
+      console.error(`${colors.red}❌ Token has very low liquidity. Try selling smaller amounts manually.${colors.reset}`);
+      console.log(`${colors.yellow}💡 Suggested solutions:${colors.reset}`);
+      console.log(`   • Try selling 25% or 50% instead of 100%`);
+      console.log(`   • Check if the token has any liquidity on Jupiter`);
+      console.log(`   • Consider burning the tokens instead`);
+      
+    } else {
+      console.error(`${colors.red}❌ Lite swap failed: ${error.message}${colors.reset}`);
+    }
+    
     logToFile(`Jupiter Lite swap error: ${error.message}`, 'error');
     throw error;
   }
@@ -637,7 +675,88 @@ export function clearTokenBalanceCache() {
  * @param {string} walletAddress - Wallet address
  * @returns {Promise<Array>} Array of tokens with basic info
  */
-export async function getQuickTokenDisplay(walletAddress) {
+// Enhanced cache for Jupiter token list with longer duration
+let jupiterTokenCache = null;
+let jupiterTokenCacheTime = 0;
+const JUPITER_CACHE_DURATION = 600000; // 10 minutes (increased for better performance)
+
+// Enhanced token pattern matching for better human-readable names
+const TOKEN_PATTERNS = {
+  'BONK': { symbol: 'BONK', name: 'Bonk' },
+  'PUMP': { symbol: 'PUMP', name: 'Pump Token' },
+  'BAGS': { symbol: 'BAGS', name: 'Bags Token' },
+  'SOL': { symbol: 'SOL', name: 'Solana' },
+  'USDC': { symbol: 'USDC', name: 'USD Coin' },
+  'USDT': { symbol: 'USDT', name: 'Tether USD' },
+  'RAY': { symbol: 'RAY', name: 'Raydium' },
+  'SRM': { symbol: 'SRM', name: 'Serum' },
+  'ORCA': { symbol: 'ORCA', name: 'Orca' },
+  'JUP': { symbol: 'JUP', name: 'Jupiter' },
+  'PYTH': { symbol: 'PYTH', name: 'Pyth Network' },
+  'WIF': { symbol: 'WIF', name: 'dogwifhat' },
+  'POPCAT': { symbol: 'POPCAT', name: 'Popcat' },
+  'BOOK': { symbol: 'BOOK', name: 'Book of Meme' },
+  'MYRO': { symbol: 'MYRO', name: 'Myro' },
+  'WEN': { symbol: 'WEN', name: 'Wen' },
+  'SAMO': { symbol: 'SAMO', name: 'Samoyedcoin' },
+  'COPE': { symbol: 'COPE', name: 'Cope' },
+  'FIDA': { symbol: 'FIDA', name: 'Bonfida' },
+  'MNGO': { symbol: 'MNGO', name: 'Mango' },
+  'STEP': { symbol: 'STEP', name: 'Step Finance' },
+  'ALEPH': { symbol: 'ALEPH', name: 'Aleph.im' },
+  'KIN': { symbol: 'KIN', name: 'Kin' },
+  'MEDIA': { symbol: 'MEDIA', name: 'Media Network' },
+  'AUDIO': { symbol: 'AUDIO', name: 'Audius' },
+  'HNT': { symbol: 'HNT', name: 'Helium' },
+  'MOBILE': { symbol: 'MOBILE', name: 'Helium Mobile' },
+  'IOT': { symbol: 'IOT', name: 'Helium IOT' },
+  'RNDR': { symbol: 'RNDR', name: 'Render Token' },
+  'LDO': { symbol: 'LDO', name: 'Lido DAO' },
+  'UNI': { symbol: 'UNI', name: 'Uniswap' },
+  'LINK': { symbol: 'LINK', name: 'Chainlink' },
+  'AAVE': { symbol: 'AAVE', name: 'Aave' },
+  'COMP': { symbol: 'COMP', name: 'Compound' },
+  'MKR': { symbol: 'MKR', name: 'Maker' },
+  'SNX': { symbol: 'SNX', name: 'Synthetix' },
+  'CRV': { symbol: 'CRV', name: 'Curve DAO' },
+  'BAL': { symbol: 'BAL', name: 'Balancer' },
+  'YFI': { symbol: 'YFI', name: 'yearn.finance' },
+  'SUSHI': { symbol: 'SUSHI', name: 'SushiSwap' },
+  '1INCH': { symbol: '1INCH', name: '1inch' },
+  'ZRX': { symbol: 'ZRX', name: '0x Protocol' },
+  'BAT': { symbol: 'BAT', name: 'Basic Attention Token' },
+  'ENJ': { symbol: 'ENJ', name: 'Enjin Coin' },
+  'MANA': { symbol: 'MANA', name: 'Decentraland' },
+  'SAND': { symbol: 'SAND', name: 'The Sandbox' },
+  'AXS': { symbol: 'AXS', name: 'Axie Infinity' },
+  'CHZ': { symbol: 'CHZ', name: 'Chiliz' },
+  'FTT': { symbol: 'FTT', name: 'FTX Token' },
+  'HT': { symbol: 'HT', name: 'Huobi Token' },
+  'OKB': { symbol: 'OKB', name: 'OKB' },
+  'BNB': { symbol: 'BNB', name: 'Binance Coin' },
+  'ADA': { symbol: 'ADA', name: 'Cardano' },
+  'DOT': { symbol: 'DOT', name: 'Polkadot' },
+  'MATIC': { symbol: 'MATIC', name: 'Polygon' },
+  'AVAX': { symbol: 'AVAX', name: 'Avalanche' },
+  'ATOM': { symbol: 'ATOM', name: 'Cosmos' },
+  'NEAR': { symbol: 'NEAR', name: 'NEAR Protocol' },
+  'ALGO': { symbol: 'ALGO', name: 'Algorand' },
+  'VET': { symbol: 'VET', name: 'VeChain' },
+  'ICP': { symbol: 'ICP', name: 'Internet Computer' },
+  'FIL': { symbol: 'FIL', name: 'Filecoin' },
+  'THETA': { symbol: 'THETA', name: 'Theta Network' },
+  'XTZ': { symbol: 'XTZ', name: 'Tezos' },
+  'EOS': { symbol: 'EOS', name: 'EOS' },
+  'TRX': { symbol: 'TRX', name: 'TRON' },
+  'XLM': { symbol: 'XLM', name: 'Stellar' },
+  'XRP': { symbol: 'XRP', name: 'Ripple' },
+  'LTC': { symbol: 'LTC', name: 'Litecoin' },
+  'BCH': { symbol: 'BCH', name: 'Bitcoin Cash' },
+  'BTC': { symbol: 'BTC', name: 'Bitcoin' },
+  'ETH': { symbol: 'ETH', name: 'Ethereum' }
+};
+
+export async function getQuickTokenDisplay(walletAddress, useFastMode = true) {
   try {
     const tokens = await getAllTokenBalances(walletAddress);
     
@@ -645,42 +764,188 @@ export async function getQuickTokenDisplay(walletAddress) {
       return [];
     }
     
-    // Get basic info for all tokens in parallel
-    const tokensWithInfo = await Promise.all(
-      tokens.map(async (token, index) => {
+    if (useFastMode) {
+      // Ultra-fast version with enhanced caching and pattern matching
+      let allTokens = null;
+      
+      // Check if we have a recent cache of Jupiter tokens
+      if (jupiterTokenCache && (Date.now() - jupiterTokenCacheTime) < JUPITER_CACHE_DURATION) {
+        allTokens = jupiterTokenCache;
+      } else {
         try {
-          // Get basic token info (symbol, name, decimals)
-          const tokenInfo = await getTokenInfo(token.mint);
-          const tokenMetadata = await getTokenMetadata(token.mint);
+          // Single API call to get all Jupiter tokens with timeout
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 second timeout
           
-          return {
-            index: index + 1,
-            mint: token.mint,
-            balance: token.balance,
-            symbol: tokenInfo.symbol || token.mint.slice(0, 8) + '...',
-            name: tokenInfo.name || 'Unknown Token',
-            shortMint: token.mint.slice(0, 8) + '...' + token.mint.slice(-8),
-            decimals: tokenMetadata.decimals || 9 // Default to 9 decimals if not found
-          };
+          const response = await fetch('https://token.jup.ag/all', {
+            signal: controller.signal
+          });
+          clearTimeout(timeoutId);
+          
+          if (response.ok) {
+            const data = await response.json();
+            allTokens = data.tokens || [];
+            jupiterTokenCache = allTokens;
+            jupiterTokenCacheTime = Date.now();
+          }
         } catch (error) {
-          // Fallback for tokens that can't be fetched
-          return {
-            index: index + 1,
-            mint: token.mint,
-            balance: token.balance,
-            symbol: token.mint.slice(0, 8) + '...',
-            name: 'Unknown Token',
-            shortMint: token.mint.slice(0, 8) + '...' + token.mint.slice(-8),
-            decimals: 9 // Default to 9 decimals
-          };
+          // Silently use fallback pattern matching
         }
-      })
-    );
-    
-    return tokensWithInfo;
+      }
+      
+      const tokensWithInfo = tokens.map((token, index) => {
+        // Try to find token info from Jupiter list first
+        let tokenInfo = null;
+        if (allTokens) {
+          tokenInfo = allTokens.find(t => t.address === token.mint);
+        }
+        
+        let symbol, name;
+        
+        if (tokenInfo) {
+          // Use real token info from Jupiter
+          symbol = tokenInfo.symbol;
+          name = tokenInfo.name;
+        } else {
+          // Enhanced pattern matching with comprehensive token list
+          const mintUpper = token.mint.toUpperCase();
+          let found = false;
+          
+          // Check against comprehensive token patterns
+          for (const [pattern, info] of Object.entries(TOKEN_PATTERNS)) {
+            if (mintUpper.includes(pattern)) {
+              symbol = info.symbol;
+              name = info.name;
+              found = true;
+              break;
+            }
+          }
+          
+          if (!found) {
+            // Try to extract readable ticker from mint address
+            const lastPart = token.mint.slice(-8).toUpperCase();
+            if (/^[A-Z]{3,6}$/.test(lastPart)) {
+              symbol = lastPart;
+              name = `${lastPart} Token`;
+            } else {
+              // Use first 4 chars as fallback
+              symbol = token.mint.slice(0, 4).toUpperCase();
+              name = 'Unknown Token';
+            }
+          }
+        }
+        
+        return {
+          index: index + 1,
+          mint: token.mint,
+          balance: token.balance,
+          symbol: symbol,
+          name: name,
+          shortMint: token.mint.slice(0, 8) + '...' + token.mint.slice(-8),
+          decimals: 9 // Default to 9 decimals for speed
+        };
+      });
+      
+      return tokensWithInfo;
+    } else {
+      // Full version with individual API calls (slower but more accurate)
+      const tokensWithInfo = await Promise.all(
+        tokens.map(async (token, index) => {
+          try {
+            const tokenInfo = await getTokenInfo(token.mint);
+            const tokenMetadata = await getTokenMetadata(token.mint);
+            
+            return {
+              index: index + 1,
+              mint: token.mint,
+              balance: token.balance,
+              symbol: tokenInfo.symbol || token.mint.slice(0, 4).toUpperCase(),
+              name: tokenInfo.name || 'Unknown Token',
+              shortMint: token.mint.slice(0, 8) + '...' + token.mint.slice(-8),
+              decimals: tokenMetadata.decimals || 9
+            };
+          } catch (error) {
+            return {
+              index: index + 1,
+              mint: token.mint,
+              balance: token.balance,
+              symbol: token.mint.slice(0, 4).toUpperCase(),
+              name: 'Unknown Token',
+              shortMint: token.mint.slice(0, 8) + '...' + token.mint.slice(-8),
+              decimals: 9
+            };
+          }
+        })
+      );
+      
+      return tokensWithInfo;
+    }
   } catch (error) {
     console.error(`${colors.red}❌ Error getting quick token display: ${error.message}${colors.reset}`);
     return [];
+  }
+}
+
+/**
+ * Enhanced token info checker with real human-readable names
+ * @param {string} mintAddress - Token mint address
+ * @returns {Promise<Object>} Token info with real name
+ */
+export async function getEnhancedTokenInfo(mintAddress) {
+  try {
+    // First try Jupiter token list
+    if (jupiterTokenCache && (Date.now() - jupiterTokenCacheTime) < JUPITER_CACHE_DURATION) {
+      const tokenInfo = jupiterTokenCache.find(t => t.address === mintAddress);
+      if (tokenInfo) {
+        return {
+          symbol: tokenInfo.symbol,
+          name: tokenInfo.name,
+          decimals: tokenInfo.decimals || 9,
+          verified: true
+        };
+      }
+    }
+    
+    // Try pattern matching
+    const mintUpper = mintAddress.toUpperCase();
+    for (const [pattern, info] of Object.entries(TOKEN_PATTERNS)) {
+      if (mintUpper.includes(pattern)) {
+        return {
+          symbol: info.symbol,
+          name: info.name,
+          decimals: 9,
+          verified: true
+        };
+      }
+    }
+    
+    // Try individual API calls as fallback
+    try {
+      const tokenInfo = await getTokenInfo(mintAddress);
+      const tokenMetadata = await getTokenMetadata(mintAddress);
+      
+      return {
+        symbol: tokenInfo.symbol || mintAddress.slice(0, 4).toUpperCase(),
+        name: tokenInfo.name || 'Unknown Token',
+        decimals: tokenMetadata.decimals || 9,
+        verified: tokenInfo.name && tokenInfo.name !== 'Unknown Token'
+      };
+    } catch (error) {
+      // Final fallback
+      return {
+        symbol: mintAddress.slice(0, 4).toUpperCase(),
+        name: 'Unknown Token',
+        decimals: 9,
+        verified: false
+      };
+    }
+  } catch (error) {
+    return {
+      symbol: mintAddress.slice(0, 4).toUpperCase(),
+      name: 'Unknown Token',
+      decimals: 9,
+      verified: false
+    };
   }
 }
 
@@ -1141,7 +1406,7 @@ export async function sendToDeadAddress(mintAddress, amount, wallet) {
 /**
  * Check if token can be sold (has liquidity)
  * @param {string} mintAddress - Token mint address
- * @returns {Promise<boolean>} True if token can be sold
+ * @returns {Promise<Object>} Object with canSell boolean and maxAmount
  */
 export async function canTokenBeSold(mintAddress) {
   try {
@@ -1154,9 +1419,35 @@ export async function canTokenBeSold(mintAddress) {
       testAmount
     );
     
-    return quote && quote.outAmount > 0;
+    if (!quote || quote.outAmount <= 0) {
+      return { canSell: false, maxAmount: 0, reason: 'No liquidity found' };
+    }
+    
+    // Check price impact
+    const priceImpact = parseFloat(quote.priceImpactPct);
+    if (priceImpact > 10) { // More than 10% price impact
+      return { canSell: false, maxAmount: 0, reason: 'Price impact too high (>10%)' };
+    }
+    
+    return { 
+      canSell: true, 
+      maxAmount: quote.inAmount,
+      priceImpact: priceImpact,
+      estimatedOutput: quote.outAmount
+    };
   } catch (error) {
-    // If we can't get a quote, the token probably can't be sold
-    return false;
+    // Check for specific Jupiter errors
+    const errorMessage = error.message.toLowerCase();
+    
+    if (errorMessage.includes('could not find any route') || 
+        errorMessage.includes('no route found') ||
+        errorMessage.includes('insufficient liquidity')) {
+      return { canSell: false, maxAmount: 0, reason: 'No trading pairs available' };
+    } else if (errorMessage.includes('price impact too high') || 
+               errorMessage.includes('slippage exceeded')) {
+      return { canSell: false, maxAmount: 0, reason: 'Price impact too high' };
+    } else {
+      return { canSell: false, maxAmount: 0, reason: error.message };
+    }
   }
 } 

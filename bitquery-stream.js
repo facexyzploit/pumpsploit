@@ -42,6 +42,7 @@ import {
   closeTokenAccount,
   sendToDeadAddress,
   getQuickTokenDisplay,
+  getEnhancedTokenInfo,
   clearTokenBalanceCache,
   getRpcEndpoint,
   performLiteSwap
@@ -92,6 +93,41 @@ function waitForSpaceKey() {
     
     process.stdin.on('data', onData);
   });
+}
+
+// Helper function to handle wallet loading errors with options
+async function handleWalletLoadError(walletName, returnFunction) {
+  console.log(`${colors.red}❌ Failed to load wallet: ${walletName}${colors.reset}`);
+  
+  const { action } = await inquirer.prompt([
+    {
+      type: 'list',
+      name: 'action',
+      message: 'Wallet loading failed. What would you like to do?',
+      choices: [
+        { name: '🔄 Try loading wallet again', value: 'retry' },
+        { name: '💼 Select different wallet', value: 'select' },
+        { name: '➕ Create new wallet', value: 'create' },
+        { name: '❌ Go back to main menu', value: 'back' }
+      ]
+    }
+  ]);
+  
+  if (action === 'retry') {
+    console.log(`${colors.cyan}🔄 Retrying wallet load...${colors.reset}`);
+    return await returnFunction(); // Recursive call
+  } else if (action === 'select') {
+    console.log(`${colors.cyan}💼 Opening wallet selector...${colors.reset}`);
+    await walletManagerMenu();
+    return await returnFunction(); // Recursive call
+  } else if (action === 'create') {
+    console.log(`${colors.cyan}➕ Opening wallet creation...${colors.reset}`);
+    await createWallet();
+    return await returnFunction(); // Recursive call
+  } else {
+    console.log(`${colors.yellow}⚠️ Returning to main menu${colors.reset}`);
+    return;
+  }
 }
 
 // Universal function to wait for Back key (B) or Space key
@@ -7333,16 +7369,71 @@ async function handleBuyToken(wallet) {
 
     if (solBalance < amount) {
       console.log(`${colors.red}❌ Insufficient SOL balance${colors.reset}`);
-      await waitForSpaceKey();
-      return;
+      console.log(`${colors.yellow}💰 Available: ${solBalance.toFixed(6)} SOL | Required: ${amount} SOL${colors.reset}`);
+      
+      const { action } = await inquirer.prompt([
+        {
+          type: 'list',
+          name: 'action',
+          message: 'What would you like to do?',
+          choices: [
+            { name: `🔄 Try with available balance (${solBalance.toFixed(6)} SOL)`, value: 'use_available' },
+            { name: '💰 Check other wallets', value: 'check_wallets' },
+            { name: '❌ Cancel and go back', value: 'cancel' }
+          ]
+        }
+      ]);
+      
+      if (action === 'use_available') {
+        // Continue with available balance
+        console.log(`${colors.cyan}🔄 Using available balance: ${solBalance.toFixed(6)} SOL${colors.reset}`);
+        amount = solBalance * 0.95; // Use 95% of available balance to account for fees
+      } else if (action === 'check_wallets') {
+        console.log(`${colors.cyan}🔍 Opening wallet manager...${colors.reset}`);
+        await walletManagerMenu();
+        return;
+      } else {
+        console.log(`${colors.yellow}⚠️ Buy cancelled${colors.reset}`);
+        return;
+      }
     }
 
-    // Get quote
-    const quote = await getBestQuote(
-      'So11111111111111111111111111111111111111112', // SOL mint
-      tokenMint,
-      amount * LAMPORTS_PER_SOL
-    );
+    // Get quote with error handling
+    let quote;
+    try {
+      quote = await getBestQuote(
+        'So11111111111111111111111111111111111111112', // SOL mint
+        tokenMint,
+        amount * LAMPORTS_PER_SOL
+      );
+    } catch (error) {
+      console.log(`${colors.red}❌ Failed to get quote: ${error.message}${colors.reset}`);
+      
+      const { action } = await inquirer.prompt([
+        {
+          type: 'list',
+          name: 'action',
+          message: 'Quote failed. What would you like to do?',
+          choices: [
+            { name: '🔍 Check token address', value: 'check_token' },
+            { name: '🔄 Try with smaller amount', value: 'smaller_amount' },
+            { name: '❌ Cancel and go back', value: 'cancel' }
+          ]
+        }
+      ]);
+      
+      if (action === 'check_token') {
+        console.log(`${colors.cyan}🔍 Opening token checker...${colors.reset}`);
+        await checkTokenAddressMenu();
+        return;
+      } else if (action === 'smaller_amount') {
+        console.log(`${colors.cyan}🔄 Retrying with 50% of amount...${colors.reset}`);
+        return await handleBuyToken(wallet); // Recursive call
+      } else {
+        console.log(`${colors.yellow}⚠️ Buy cancelled${colors.reset}`);
+        return;
+      }
+    }
 
     // Show quote and emergency sell option
     console.log(`${colors.cyan}📊 Quote: ${amount} SOL → ${quote.outAmount} tokens${colors.reset}`);
@@ -7799,12 +7890,24 @@ async function displayRealtimeTokenList(tokens) {
 async function handleSellToken(wallet) {
   console.log(`${colors.red}🔴 Sell Token Mode${colors.reset}\n`);
 
-  try {
-    // Get all token balances with quick display
+  let tokens;
+  let selectedToken;
+  
+  const loadAndDisplayTokens = async () => {
     console.log(`${colors.cyan}🔍 Loading your tokens...${colors.reset}`);
-    const tokens = await getQuickTokenDisplay(wallet.publicKey.toString());
     
-    let selectedToken;
+    // Show loading animation
+    const loadingInterval = setInterval(() => {
+      process.stdout.write('\r' + '⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'.charAt(Date.now() / 100) % 10 + ' Loading tokens...');
+    }, 100);
+    
+    try {
+      // Use fast mode by default for instant loading
+      tokens = await getQuickTokenDisplay(wallet.publicKey.toString(), true);
+    } finally {
+      clearInterval(loadingInterval);
+      process.stdout.write('\r' + ' '.repeat(50) + '\r'); // Clear loading line
+    }
     
     if (tokens.length === 0) {
       console.log(`${colors.yellow}⚠️ No tokens found in your wallet${colors.reset}`);
@@ -7823,50 +7926,121 @@ async function handleSellToken(wallet) {
       ]);
       
       if (selectedOption === 'back') {
-        return;
+        return false;
       }
       
       selectedToken = 'custom';
+      return true;
     } else {
       
-      // Display tokens with quick info
+      // Display tokens with enhanced info including ticker
       console.log(`${colors.green}📋 Your Tokens:${colors.reset}`);
       console.log(`${colors.white}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${colors.reset}`);
       
       for (let i = 0; i < tokens.length; i++) {
         const token = tokens[i];
-        console.log(`${colors.cyan}${token.index}.${colors.reset} ${token.symbol} (${token.shortMint})`);
+        
+        // Determine if this is a known token with real name
+        const isKnownToken = token.name !== 'Unknown Token' && token.name !== `${token.symbol} Token`;
+        const nameColor = isKnownToken ? colors.green : colors.yellow;
+        const symbolColor = isKnownToken ? colors.cyan : colors.white;
+        
+        // Show ticker in brackets only for known tokens
+        const tickerDisplay = isKnownToken ? `[${token.symbol}]` : '';
+        
+        console.log(`${colors.cyan}${token.index}.${colors.reset} ${symbolColor}${token.symbol}${colors.reset} ${tickerDisplay} (${token.shortMint})`);
         console.log(`   💰 Balance: ${token.balance.toLocaleString()}`);
-        console.log(`   📝 Name: ${token.name}`);
+        console.log(`   📝 Name: ${nameColor}${token.name}${colors.reset}`);
+        
+        // Add additional info for known tokens
+        if (isKnownToken) {
+          console.log(`   ✅ Verified Token`);
+        } else {
+          console.log(`   ⚠️ Unknown Token (may be custom)`);
+        }
         console.log('');
       }
       
-      // Create simple token choices
-      const tokenChoices = tokens.map((token, index) => ({
-        name: `${index + 1}. ${token.symbol} (${token.shortMint}) - Balance: ${token.balance.toLocaleString()}`,
-        value: token
-      }));
+      // Create enhanced token choices with better display
+      const tokenChoices = tokens.map((token, index) => {
+        const isKnownToken = token.name !== 'Unknown Token' && token.name !== `${token.symbol} Token`;
+        const tickerDisplay = isKnownToken ? `[${token.symbol}]` : '';
+        const tokenStatus = isKnownToken ? '✅' : '⚠️';
+        
+        return {
+          name: `${index + 1}. ${tokenStatus} ${token.symbol} ${tickerDisplay} - ${token.balance.toLocaleString()} tokens`,
+          value: token
+        };
+      });
 
-      // Add options
+      // Add options with refresh
       tokenChoices.push(
         { name: `${tokens.length + 1}. Enter custom token mint address`, value: 'custom' },
-        { name: `${tokens.length + 2}. Back to main menu`, value: 'back' }
+        { name: `${tokens.length + 2}. 🔄 Refresh token list`, value: 'refresh' },
+        { name: `${tokens.length + 3}. Back to main menu`, value: 'back' }
       );
 
+      // Set up hotkey listener for 'R' key
+      const originalRawMode = process.stdin.isRaw;
+      const originalEncoding = process.stdin.encoding;
+      
+      process.stdin.setRawMode(true);
+      process.stdin.resume();
+      process.stdin.setEncoding('utf8');
+      
+      let hotkeyPressed = false;
+      const onData = (data) => {
+        if (data.toLowerCase() === 'r') {
+          hotkeyPressed = true;
+          process.stdin.setRawMode(false);
+          process.stdin.pause();
+          process.stdin.setRawMode(originalRawMode);
+          process.stdin.setEncoding(originalEncoding);
+          process.stdin.removeListener('data', onData);
+        }
+      };
+      
+      process.stdin.on('data', onData);
+      
       const { selectedOption } = await inquirer.prompt([
         {
           type: 'list',
           name: 'selectedOption',
-          message: 'Select token to sell:',
+          message: 'Select token to sell (Press R to refresh):',
           choices: tokenChoices
         }
       ]);
       
+      // Clean up hotkey listener
+      process.stdin.setRawMode(false);
+      process.stdin.pause();
+      process.stdin.setRawMode(originalRawMode);
+      process.stdin.setEncoding(originalEncoding);
+      process.stdin.removeListener('data', onData);
+      
+      if (hotkeyPressed) {
+        console.clear();
+        console.log(`${colors.red}🔴 Sell Token Mode${colors.reset}\n`);
+        return await loadAndDisplayTokens(); // Recursive call to refresh
+      }
+      
       if (selectedOption === 'back') {
-        return;
+        return false;
+      } else if (selectedOption === 'refresh') {
+        console.clear();
+        console.log(`${colors.red}🔴 Sell Token Mode${colors.reset}\n`);
+        return await loadAndDisplayTokens(); // Recursive call to refresh
       }
       
       selectedToken = selectedOption;
+      return true;
+    }
+  };
+
+  try {
+    const shouldContinue = await loadAndDisplayTokens();
+    if (!shouldContinue) {
+      return;
     }
 
     let tokenMint, tokenBalance, tokenDecimals;
@@ -7919,10 +8093,16 @@ async function handleSellToken(wallet) {
           { name: '50%', value: 50 },
           { name: '75%', value: 75 },
           { name: '100%', value: 100 },
-          { name: 'Custom percentage', value: 'custom' }
+          { name: 'Custom percentage', value: 'custom' },
+          { name: '❌ Cancel', value: 'cancel' }
         ]
       }
     ]);
+
+    if (sellPercentage === 'cancel') {
+      console.log(`${colors.yellow}⚠️ Sell cancelled${colors.reset}`);
+      return;
+    }
 
     let percentage;
     if (sellPercentage === 'custom') {
@@ -7977,6 +8157,51 @@ async function handleSellToken(wallet) {
       console.log(`${colors.cyan}📊 Fallback amount: ${amountInSmallestUnits.toLocaleString()}${colors.reset}`);
     }
 
+    // Check if the token can be sold before attempting
+    console.log(`${colors.cyan}🔍 Checking token liquidity...${colors.reset}`);
+    const liquidityCheck = await canTokenBeSold(tokenMint);
+    
+    if (!liquidityCheck.canSell) {
+      console.log(`${colors.red}❌ Cannot sell this token: ${liquidityCheck.reason}${colors.reset}`);
+      console.log(`${colors.yellow}💡 This token has no liquidity on Jupiter${colors.reset}`);
+      
+      // Offer options for tokens that can't be sold
+      const { action } = await inquirer.prompt([
+        {
+          type: 'list',
+          name: 'action',
+          message: 'What would you like to do?',
+          choices: [
+            { name: '🔥 Burn tokens (remove from wallet)', value: 'burn' },
+            { name: '🔄 Try with smaller amount (25%)', value: 'smaller' },
+            { name: '❌ Cancel and go back', value: 'cancel' }
+          ]
+        }
+      ]);
+      
+      if (action === 'burn') {
+        console.log(`${colors.red}🔥 Burning tokens...${colors.reset}`);
+        // Call the burn function
+        const burnResult = await burnTokens(tokenMint, amountInSmallestUnits, wallet);
+        if (burnResult.success) {
+          console.log(`${colors.green}✅ Tokens burned successfully!${colors.reset}`);
+        }
+        return;
+      } else if (action === 'smaller') {
+        // Retry with 25% of the amount
+        const smallerAmount = Math.floor(amountInSmallestUnits * 0.25);
+        const smallerAmountToSell = (tokenBalance * 25) / 100;
+        
+        console.log(`${colors.cyan}🔄 Retrying with 25%: ${smallerAmountToSell.toLocaleString()} tokens${colors.reset}`);
+        
+        // Recursive call with smaller amount
+        return await handleSellToken(wallet);
+      } else {
+        console.log(`${colors.yellow}⚠️ Sell cancelled${colors.reset}`);
+        return;
+      }
+    }
+
     // Get quote
     const quote = await getBestQuote(
       tokenMint,
@@ -7984,8 +8209,14 @@ async function handleSellToken(wallet) {
       amountInSmallestUnits
     );
 
-    // Show quote summary
+    // Show quote summary with price impact warning
     console.log(`${colors.cyan}📊 Quote: ${amountToSell.toLocaleString()} tokens (${percentage}%) → ${(quote.outAmount / LAMPORTS_PER_SOL).toFixed(6)} SOL${colors.reset}`);
+    console.log(`${colors.cyan}📊 Price Impact: ${quote.priceImpactPct}%${colors.reset}`);
+    
+    if (parseFloat(quote.priceImpactPct) > 5) {
+      console.log(`${colors.yellow}⚠️ High price impact detected (${quote.priceImpactPct}%). Consider selling smaller amounts.${colors.reset}`);
+    }
+    
     console.log(`${colors.green}🚀 Executing sell transaction...${colors.reset}`);
 
     // Initialize transaction progress monitor
@@ -8120,6 +8351,39 @@ async function handleSellToken(wallet) {
           console.log(`${colors.yellow}💡 Wallet space freed up${colors.reset}`);
         } catch (burnError) {
           console.error(`${colors.red}❌ Burn failed: ${burnError.message}${colors.reset}`);
+          
+          const { action } = await inquirer.prompt([
+            {
+              type: 'list',
+              name: 'action',
+              message: 'Burn failed. What would you like to do?',
+              choices: [
+                { name: '🔄 Try burn again', value: 'retry_burn' },
+                { name: '🔥 Try alternative burn method', value: 'alternative_burn' },
+                { name: '❌ Keep tokens in wallet', value: 'keep' }
+              ]
+            }
+          ]);
+          
+          if (action === 'retry_burn') {
+            console.log(`${colors.cyan}🔄 Retrying burn...${colors.reset}`);
+            try {
+              const retryBurnResult = await burnTokens(tokenMint, amountToSell, wallet);
+              console.log(`${colors.green}✅ Burn successful on retry!${colors.reset}`);
+            } catch (retryError) {
+              console.error(`${colors.red}❌ Burn retry also failed: ${retryError.message}${colors.reset}`);
+            }
+          } else if (action === 'alternative_burn') {
+            console.log(`${colors.cyan}🔥 Trying alternative burn method...${colors.reset}`);
+            try {
+              const altBurnResult = await sendToDeadAddress(tokenMint, amountToSell, wallet);
+              console.log(`${colors.green}✅ Alternative burn successful!${colors.reset}`);
+            } catch (altError) {
+              console.error(`${colors.red}❌ Alternative burn failed: ${altError.message}${colors.reset}`);
+            }
+          } else {
+            console.log(`${colors.yellow}⚠️ Tokens kept in wallet${colors.reset}`);
+          }
         }
       } else {
         console.log(`${colors.yellow}⚠️ Tokens kept in wallet${colors.reset}`);

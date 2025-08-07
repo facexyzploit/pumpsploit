@@ -225,22 +225,27 @@ export class QuickTrading {
 
       console.log(`${colors.blue}💰 Token Balance: ${tokenBalance.toLocaleString()}${colors.reset}`);
 
-      // Ask for percentage to sell
-      const { sellPercentage } = await inquirer.prompt([
-        {
-          type: 'list',
-          name: 'sellPercentage',
-          message: 'How much to sell?',
-          choices: [
-            { name: '25%', value: 25 },
-            { name: '50%', value: 50 },
-            { name: '75%', value: 75 },
-            { name: '100%', value: 100 },
-            { name: 'Custom percentage', value: 'custom' },
-  
-          ]
-        }
-      ]);
+             // Ask for percentage to sell
+       const { sellPercentage } = await inquirer.prompt([
+         {
+           type: 'list',
+           name: 'sellPercentage',
+           message: 'How much to sell?',
+           choices: [
+             { name: '25%', value: 25 },
+             { name: '50%', value: 50 },
+             { name: '75%', value: 75 },
+             { name: '100%', value: 100 },
+             { name: 'Custom percentage', value: 'custom' },
+             { name: '❌ Cancel', value: 'cancel' }
+           ]
+         }
+       ]);
+
+       if (sellPercentage === 'cancel') {
+         console.log(`${colors.yellow}⚠️ Sell cancelled${colors.reset}`);
+         return;
+       }
 
       let percentage;
       
