@@ -147,6 +147,63 @@ const { aiEnhancedAnalyzer } = await import('./ai-enhanced-analyzer.js');
     }
   }
 
+  // Open DexScreener chart
+  async openDexScreener() {
+    const currentTrade = this.state.getCurrentTrade();
+    if (!currentTrade) {
+      this.showError('No trade selected');
+      return;
+    }
+
+    try {
+      const address = currentTrade.Trade.Buy.Currency.MintAddress;
+      const symbol = currentTrade.Trade.Buy.Currency.Symbol;
+      const url = `https://dexscreener.com/solana/${address}`;
+      
+      this.showInfo(`Opening DexScreener chart for ${symbol}...`);
+      
+      // Open URL based on platform
+      if (process.platform === 'win32') {
+        exec(`start ${url}`);
+      } else if (process.platform === 'darwin') {
+        exec(`open ${url}`);
+      } else {
+        exec(`xdg-open ${url}`);
+      }
+      
+      this.showSuccess(`DexScreener chart opened: ${url}`);
+    } catch (error) {
+      this.showError(`Failed to open DexScreener: ${error.message}`);
+    }
+  }
+
+  // Open DexScreener transaction tracking
+  async openDexScreenerTransaction(signature) {
+    if (!signature) {
+      this.showError('No transaction signature provided');
+      return;
+    }
+
+    try {
+      const url = `https://dexscreener.com/solana/tx/${signature}`;
+      
+      this.showInfo(`Opening DexScreener transaction tracking...`);
+      
+      // Open URL based on platform
+      if (process.platform === 'win32') {
+        exec(`start ${url}`);
+      } else if (process.platform === 'darwin') {
+        exec(`open ${url}`);
+      } else {
+        exec(`xdg-open ${url}`);
+      }
+      
+      this.showSuccess(`DexScreener transaction tracking opened: ${url}`);
+    } catch (error) {
+      this.showError(`Failed to open DexScreener transaction: ${error.message}`);
+    }
+  }
+
   // Show detailed trade information
   showTradeDetails() {
     const currentTrade = this.state.getCurrentTrade();

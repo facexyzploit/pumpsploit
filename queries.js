@@ -4,7 +4,7 @@ const pumpTradesQuery = {
     Solana {
       DEXTrades(
         limitBy: {count: 1, by: Trade_Buy_Currency_MintAddress}
-        limit: {count: 8}
+        limit: {count: 20}
         orderBy: {descending: Block_Time}
         where: {Trade: {Buy: {PriceInUSD: {gt: 0.000001}, Currency: {MintAddress: {notIn: ["11111111111111111111111111111111"]}}, Price: {}}, Sell: {AmountInUSD: {gt: "9"}}, Dex: {ProtocolName: {is: "pump"}}, Market: {}}, Transaction: {Result: {Success: true}}}
       ) {
@@ -59,7 +59,7 @@ const pumpfunCrossMarketQuery = {
   query: `{
     Solana {
       DEXTrades(
-        limit: {count: 8}
+        limit: {count: 50}
         orderBy: {descending: Block_Time}
         where: {Trade: {Dex: {ProtocolName: {is: "pump"}}, Buy: {Currency: {MintAddress: {notIn: ["11111111111111111111111111111111"]}}, PriceInUSD: {gt: 0.000001}}, Sell: {AmountInUSD: {gt: "10"}}}, Transaction: {Result: {Success: true}}}
       ) {
@@ -222,7 +222,7 @@ const graduatedQuery = {
   Solana {
     DEXPools(
       limitBy: { by: Pool_Market_BaseCurrency_MintAddress, count: 1 }
-      limit: { count: 10 }
+      limit: { count: 100 }
       orderBy: { ascending: Pool_Base_PostAmount }
       where: {
         Pool: {
@@ -343,7 +343,7 @@ const fallbackQuery = {
   query: `{
     Solana {
       DEXTrades(
-        limit: {count: 5}
+        limit: {count: 100}
         orderBy: {descending: Block_Time}
         where: {Trade: {Dex: {ProtocolName: {is: "pump"}}, Buy: {Currency: {MintAddress: {notIn: ["11111111111111111111111111111111"]}}}}, Transaction: {Result: {Success: true}}}
       ) {

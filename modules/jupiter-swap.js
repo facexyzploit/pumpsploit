@@ -2,9 +2,20 @@ import fetch from 'node-fetch';
 import { Keypair, Connection, LAMPORTS_PER_SOL, Transaction, PublicKey, VersionedTransaction } from '@solana/web3.js';
 import { TOKEN_PROGRAM_ID } from '@solana/spl-token';
 import bs58 from 'bs58';
+import { exec } from 'child_process';
 import { colors } from '../colors.js';
 import { logToFile } from '../logger.js';
 import { SettingsManager } from './settings-manager.js';
+import { performanceOptimizer } from './performance-optimizer.js';
+import { connectionManager } from './connection-manager.js';
+
+/**
+ * Get preloaded tokens if available
+ * @returns {Array} Array of preloaded tokens
+ */
+export function getPreloadedTokens() {
+  return global.preloadedTokens || [];
+}
 
 // Jupiter API endpoints
 const JUPITER_QUOTE_API = 'https://quote-api.jup.ag/v6/quote';
@@ -21,11 +32,9 @@ const ULTRA_V2_SWAP_API = 'https://quote-api.jup.ag/v6/swap';
 // Settings manager
 const settingsManager = new SettingsManager();
 
-// Get RPC endpoint from settings
+// Get RPC endpoint from connection manager
 export function getRpcEndpoint() {
-  return settingsManager.get('enableCustomRpc') 
-    ? settingsManager.get('customRpcEndpoint') 
-    : 'https://api.mainnet-beta.solana.com';
+  return connectionManager.getRpcEndpoint();
 }
 
 /**
@@ -244,6 +253,25 @@ export async function performSwap(fromMint, toMint, amount, wallet, slippage = n
       
       console.log(`${colors.green}✅ Swap completed successfully!${colors.reset}`);
       
+      // Open DexScreener transaction tracking
+      try {
+        const url = `https://dexscreener.com/solana/tx/${signature}`;
+        console.log(`${colors.cyan}🔗 Opening DexScreener transaction tracking...${colors.reset}`);
+        
+        // Open URL based on platform
+        if (process.platform === 'win32') {
+          exec(`start ${url}`);
+        } else if (process.platform === 'darwin') {
+          exec(`open ${url}`);
+        } else {
+          exec(`xdg-open ${url}`);
+        }
+        
+        console.log(`${colors.green}✅ DexScreener transaction tracking opened: ${url}${colors.reset}`);
+      } catch (error) {
+        console.log(`${colors.yellow}⚠️ Failed to open DexScreener: ${error.message}${colors.reset}`);
+      }
+      
       return {
         success: true,
         signature: signature,
@@ -277,6 +305,25 @@ export async function performSwap(fromMint, toMint, amount, wallet, slippage = n
         }
         
         console.log(`${colors.green}✅ Swap completed successfully!${colors.reset}`);
+        
+        // Open DexScreener transaction tracking
+        try {
+          const url = `https://dexscreener.com/solana/tx/${signature}`;
+          console.log(`${colors.cyan}🔗 Opening DexScreener transaction tracking...${colors.reset}`);
+          
+          // Open URL based on platform
+          if (process.platform === 'win32') {
+            exec(`start ${url}`);
+          } else if (process.platform === 'darwin') {
+            exec(`open ${url}`);
+          } else {
+            exec(`xdg-open ${url}`);
+          }
+          
+          console.log(`${colors.green}✅ DexScreener transaction tracking opened: ${url}${colors.reset}`);
+        } catch (error) {
+          console.log(`${colors.yellow}⚠️ Failed to open DexScreener: ${error.message}${colors.reset}`);
+        }
         
         return {
           success: true,
@@ -329,6 +376,25 @@ export async function performSwap(fromMint, toMint, amount, wallet, slippage = n
             }
             
             console.log(`${colors.green}✅ Swap completed successfully!${colors.reset}`);
+            
+            // Open DexScreener transaction tracking
+            try {
+              const url = `https://dexscreener.com/solana/tx/${signature}`;
+              console.log(`${colors.cyan}🔗 Opening DexScreener transaction tracking...${colors.reset}`);
+              
+              // Open URL based on platform
+              if (process.platform === 'win32') {
+                exec(`start ${url}`);
+              } else if (process.platform === 'darwin') {
+                exec(`open ${url}`);
+              } else {
+                exec(`xdg-open ${url}`);
+              }
+              
+              console.log(`${colors.green}✅ DexScreener transaction tracking opened: ${url}${colors.reset}`);
+            } catch (error) {
+              console.log(`${colors.yellow}⚠️ Failed to open DexScreener: ${error.message}${colors.reset}`);
+            }
             
             return {
               success: true,
@@ -586,7 +652,18 @@ export async function getTokenMetadata(mintAddress) {
  */
 export async function getTokenInfo(mintAddress) {
   try {
-    const response = await fetch(`https://token.jup.ag/all`);
+    // Use optimized cache from performance optimizer
+    const cacheKey = `token_info_${mintAddress}`;
+    const cached = performanceOptimizer.getCached('tokenInfo', cacheKey);
+    
+    if (cached) {
+      return cached;
+    }
+
+    // Use optimized request with retry
+    const response = await performanceOptimizer.executeWithRetry(async () => {
+      return await fetch(`https://token.jup.ag/all`);
+    });
     
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}: ${await response.text()}`);
@@ -596,21 +673,33 @@ export async function getTokenInfo(mintAddress) {
     const tokens = data.tokens || [];
     const token = tokens.find(t => t.address === mintAddress);
     
+    let result;
     if (token) {
-      return {
+      result = {
         symbol: token.symbol,
         name: token.name,
         logoURI: token.logoURI
       };
     } else {
       // Fallback: extract symbol from mint address
-      return {
+      result = {
         symbol: mintAddress.slice(0, 4) + '...' + mintAddress.slice(-4),
         name: 'Unknown Token',
         logoURI: null
       };
     }
+    
+    // Cache the result
+    performanceOptimizer.setCached('tokenInfo', cacheKey, result);
+    return result;
+    
   } catch (error) {
+    // Use optimized error handling
+    await performanceOptimizer.handleError(error, {
+      operation: 'getTokenInfo',
+      mintAddress
+    });
+    
     console.error(`${colors.red}❌ Error getting token info: ${error.message}${colors.reset}`);
     // Fallback: extract symbol from mint address
     return {
@@ -633,23 +722,47 @@ const CACHE_DURATION = 5000; // 5 seconds
  */
 export async function getAllTokenBalances(walletAddress, forceRefresh = false) {
   try {
-    // Check cache first
-    const cacheKey = walletAddress;
-    const cached = tokenBalanceCache.get(cacheKey);
-    
-    if (!forceRefresh && cached && (Date.now() - cached.timestamp) < CACHE_DURATION) {
-      return cached.data;
+    // Check if we have preloaded tokens for this wallet
+    const preloadedTokens = getPreloadedTokens();
+    if (preloadedTokens.length > 0 && !forceRefresh) {
+      // Filter tokens for the specific wallet address
+      const walletTokens = preloadedTokens.filter(token => 
+        token.walletAddress === walletAddress || !token.walletAddress
+      );
+      
+      if (walletTokens.length > 0) {
+        console.log(`${colors.green}✅ Using preloaded tokens (${walletTokens.length} tokens)${colors.reset}`);
+        return walletTokens.map(token => ({
+          mint: token.mint,
+          balance: token.balance,
+          decimals: token.decimals,
+          symbol: token.symbol,
+          name: token.name,
+          pnl: token.pnl
+        }));
+      }
     }
     
-    const connection = new Connection(getRpcEndpoint());
+    // Use optimized cache from performance optimizer
+    const cacheKey = `balances_${walletAddress}`;
+    const cached = performanceOptimizer.getCached('walletBalances', cacheKey);
     
-    // Get all token accounts
-    const tokenAccounts = await connection.getParsedTokenAccountsByOwner(
-      new PublicKey(walletAddress),
-      {
-        programId: TOKEN_PROGRAM_ID
-      }
-    );
+    if (!forceRefresh && cached) {
+      return cached;
+    }
+    
+    // Use optimized connection from connection manager
+    const connection = await connectionManager.getOptimizedConnection();
+    
+    // Get all token accounts with optimized error handling
+    const tokenAccounts = await performanceOptimizer.executeWithRetry(async () => {
+      return await connection.getParsedTokenAccountsByOwner(
+        new PublicKey(walletAddress),
+        {
+          programId: TOKEN_PROGRAM_ID
+        }
+      );
+    });
     
     const tokens = [];
     
@@ -695,14 +808,18 @@ export async function getAllTokenBalances(walletAddress, forceRefresh = false) {
       }
     }
     
-    // Cache the result
-    tokenBalanceCache.set(cacheKey, {
-      data: tokens,
-      timestamp: Date.now()
-    });
+    // Cache the result using performance optimizer
+    performanceOptimizer.setCached('walletBalances', cacheKey, tokens);
     
     return tokens;
   } catch (error) {
+    // Use optimized error handling
+    const errorResult = await performanceOptimizer.handleError(error, {
+      operation: 'getAllTokenBalances',
+      walletAddress,
+      forceRefresh
+    });
+    
     console.error(`${colors.red}❌ Error getting all token balances: ${error.message}${colors.reset}`);
     // Return empty array instead of throwing
     return [];
@@ -1084,24 +1201,46 @@ export async function validateSwap(fromMint, toMint, amount, wallet) {
  */
 export async function getTokenPrice(mintAddress, silent = false) {
   try {
-    // Try Jupiter Lite API first (more reliable)
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 second timeout
+    // Use optimized cache from performance optimizer
+    const cacheKey = `price_${mintAddress}`;
+    const cached = performanceOptimizer.getCached('tokenPrices', cacheKey);
     
-    const response = await fetch(`https://lite-api.jup.ag/price/v3?ids=${mintAddress}`, {
-      signal: controller.signal,
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+    if (cached) {
+      if (!silent) {
+        console.log(`${colors.green}✅ Cached token price: $${cached.toFixed(6)}${colors.reset}`);
+      }
+      return cached;
+    }
+
+    // Use optimized request with retry and timeout
+    const response = await performanceOptimizer.executeWithRetry(async () => {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 second timeout
+      
+      try {
+        const response = await fetch(`https://lite-api.jup.ag/price/v3?ids=${mintAddress}`, {
+          signal: controller.signal,
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+          }
+        });
+        
+        clearTimeout(timeoutId);
+        return response;
+      } catch (error) {
+        clearTimeout(timeoutId);
+        throw error;
       }
     });
-    
-    clearTimeout(timeoutId);
     
     if (response.ok) {
       const data = await response.json();
       const priceData = data[mintAddress]; // Direct access, no .data wrapper
       
       if (priceData && priceData.usdPrice > 0) {
+        // Cache the successful price for 30 seconds
+        performanceOptimizer.setCached('tokenPrices', cacheKey, priceData.usdPrice);
+        
         if (!silent) console.log(`${colors.green}✅ Jupiter Lite API: $${priceData.usdPrice}${colors.reset}`);
         return priceData.usdPrice;
       } else {
@@ -1176,6 +1315,13 @@ export async function getTokenPrice(mintAddress, silent = false) {
     return 0.00000001; // Very small value to indicate no price data
     
   } catch (error) {
+    // Use optimized error handling
+    await performanceOptimizer.handleError(error, {
+      operation: 'getTokenPrice',
+      mintAddress,
+      silent
+    });
+    
     if (!silent) console.log(`${colors.red}❌ Price API error: ${error.message}${colors.reset}`);
     return 0.00000001; // Very small value to indicate no price data
   }
@@ -1561,5 +1707,59 @@ export async function canTokenBeSold(mintAddress) {
     } else {
       return { canSell: false, maxAmount: 0, reason: error.message };
     }
+  }
+} 
+
+/**
+ * Get prices for multiple tokens in a single API call (much faster)
+ * @param {Array<string>} mintAddresses - Array of token mint addresses
+ * @param {boolean} silent - Whether to suppress console output
+ * @returns {Promise<Object>} Object with mint addresses as keys and prices as values
+ */
+export async function getBatchTokenPrices(mintAddresses, silent = false) {
+  if (mintAddresses.length === 0) return {};
+  
+  try {
+    // Join all mint addresses with commas for batch request
+    const ids = mintAddresses.join(',');
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
+    
+    const response = await fetch(`https://lite-api.jup.ag/price/v3?ids=${ids}`, {
+      signal: controller.signal,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+      }
+    });
+    
+    clearTimeout(timeoutId);
+    
+    if (response.ok) {
+      const data = await response.json();
+      const prices = {};
+      
+      // Extract prices for each mint address
+      mintAddresses.forEach(mintAddress => {
+        const priceData = data[mintAddress];
+        if (priceData && priceData.usdPrice > 0) {
+          prices[mintAddress] = priceData.usdPrice;
+        } else {
+          prices[mintAddress] = 0.00000001; // Fallback value
+        }
+      });
+      
+      if (!silent) {
+        const successCount = Object.values(prices).filter(p => p > 0.00000001).length;
+        console.log(`${colors.green}✅ Batch Price API: ${successCount}/${mintAddresses.length} tokens priced${colors.reset}`);
+      }
+      
+      return prices;
+    } else {
+      if (!silent) console.log(`${colors.yellow}⚠️ Batch Price API: HTTP ${response.status}${colors.reset}`);
+      return {};
+    }
+  } catch (error) {
+    if (!silent) console.log(`${colors.red}❌ Batch Price API error: ${error.message}${colors.reset}`);
+    return {};
   }
 } 

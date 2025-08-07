@@ -412,12 +412,22 @@ class AppState {
       console.log(`${colors.cyan}Transaction Details:${colors.reset}`);
       console.log(`Signature: ${colors.yellow}${transaction?.Signature || 'Unknown'}${colors.reset}`);
       const timeVerification = verifyTradeTime(block?.Time);
-      console.log(`Time: ${new Date(block?.Time || Date.now()).toISOString()} (${timeVerification.formattedDiff})\n`);
+      console.log(`Time: ${new Date(block?.Time || Date.now()).toISOString()} (${timeVerification.formattedDiff})`);
+      
+      // Transaction tracking links
+      if (transaction?.Signature) {
+        console.log(`${colors.cyan}Transaction Tracking:${colors.reset}`);
+        console.log(`${colors.blue}• Solscan: https://solscan.io/tx/${transaction.Signature}${colors.reset}`);
+        console.log(`${colors.blue}• DexScreener: https://dexscreener.com/solana/tx/${transaction.Signature}${colors.reset}\n`);
+      } else {
+        console.log('');
+      }
 
       // Links
       console.log(`${colors.cyan}Useful Links:${colors.reset}`);
       console.log(`${colors.blue}• Solscan: https://solscan.io/token/${buyToken.MintAddress}${colors.reset}`);
-      console.log(`${colors.blue}• GMGN.io: https://gmgn.ai/sol/token/${buyToken.MintAddress}${colors.reset}\n`);
+      console.log(`${colors.blue}• GMGN.io: https://gmgn.ai/sol/token/${buyToken.MintAddress}${colors.reset}`);
+      console.log(`${colors.blue}• DexScreener: https://dexscreener.com/solana/${buyToken.MintAddress}${colors.reset}\n`);
 
       // Draw price chart if we have enough data
       if (this.priceHistory.prices.length > 1) {

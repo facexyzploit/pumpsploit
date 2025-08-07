@@ -1,4 +1,5 @@
 import inquirer from 'inquirer';
+import { exec } from 'child_process';
 import { colors } from '../colors.js';
 import { 
   getBestQuote, 
@@ -8,7 +9,8 @@ import {
   getTokenMetadata,
   getAllTokenBalances,
   getTokenInfo,
-  calculateTokenPnL
+  calculateTokenPnL,
+  getPreloadedTokens
 } from './jupiter-swap.js';
 import { SettingsManager } from './settings-manager.js';
 import { LAMPORTS_PER_SOL } from '@solana/web3.js';
@@ -103,6 +105,25 @@ export class QuickTrading {
       console.log(`${colors.green}✅ Buy completed!${colors.reset}`);
       console.log(`${colors.blue}📝 Transaction: ${result.signature}${colors.reset}`);
       
+      // Open DexScreener transaction tracking
+      try {
+        const url = `https://dexscreener.com/solana/tx/${result.signature}`;
+        console.log(`${colors.cyan}🔗 Opening DexScreener transaction tracking...${colors.reset}`);
+        
+        // Open URL based on platform
+        if (process.platform === 'win32') {
+          exec(`start ${url}`);
+        } else if (process.platform === 'darwin') {
+          exec(`open ${url}`);
+        } else {
+          exec(`xdg-open ${url}`);
+        }
+        
+        console.log(`${colors.green}✅ DexScreener transaction tracking opened: ${url}${colors.reset}`);
+      } catch (error) {
+        console.log(`${colors.yellow}⚠️ Failed to open DexScreener: ${error.message}${colors.reset}`);
+      }
+      
       // Clear screen and return to main menu
       console.log(`\n${colors.cyan}Press SPACE to return to main menu...${colors.reset}`);
       await this.waitForSpaceKey();
@@ -119,7 +140,7 @@ export class QuickTrading {
     console.log(`${colors.red}🔴 Quick Sell from Active Wallet${colors.reset}\n`);
     
     try {
-      // Get all token balances
+      // Get all token balances (will use preloaded tokens if available)
       console.log(`${colors.cyan}🔍 Loading your tokens...${colors.reset}`);
       const tokens = await getAllTokenBalances(wallet.publicKey.toString());
       
@@ -144,13 +165,27 @@ export class QuickTrading {
       console.log(`${colors.green}📋 Your Tokens:${colors.reset}`);
       console.log(`${colors.white}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${colors.reset}`);
       
-      const tokensWithInfo = await Promise.all(
-        tokens.map(async (token) => {
-          const tokenInfo = await getTokenInfo(token.mint);
-          const pnl = await calculateTokenPnL(token.mint, token.balance);
-          return { ...token, ...tokenInfo, pnl };
-        })
-      );
+      // Check if we have preloaded tokens with enhanced info
+      const preloadedTokens = getPreloadedTokens();
+      let tokensWithInfo;
+      
+      if (preloadedTokens.length > 0) {
+        // Use preloaded tokens if available
+        console.log(`${colors.green}✅ Using preloaded token data${colors.reset}`);
+        tokensWithInfo = preloadedTokens.filter(token => 
+          tokens.some(t => t.mint === token.mint)
+        );
+      } else {
+        // Fallback to loading token info
+        console.log(`${colors.yellow}⚠️ Loading token info...${colors.reset}`);
+        tokensWithInfo = await Promise.all(
+          tokens.map(async (token) => {
+            const tokenInfo = await getTokenInfo(token.mint);
+            const pnl = await calculateTokenPnL(token.mint, token.balance);
+            return { ...token, ...tokenInfo, pnl };
+          })
+        );
+      }
 
       for (let i = 0; i < tokensWithInfo.length; i++) {
         const token = tokensWithInfo[i];
@@ -297,6 +332,25 @@ export class QuickTrading {
 
       console.log(`${colors.green}✅ Sell completed!${colors.reset}`);
       console.log(`${colors.blue}📝 Transaction: ${result.signature}${colors.reset}`);
+      
+      // Open DexScreener transaction tracking
+      try {
+        const url = `https://dexscreener.com/solana/tx/${result.signature}`;
+        console.log(`${colors.cyan}🔗 Opening DexScreener transaction tracking...${colors.reset}`);
+        
+        // Open URL based on platform
+        if (process.platform === 'win32') {
+          exec(`start ${url}`);
+        } else if (process.platform === 'darwin') {
+          exec(`open ${url}`);
+        } else {
+          exec(`xdg-open ${url}`);
+        }
+        
+        console.log(`${colors.green}✅ DexScreener transaction tracking opened: ${url}${colors.reset}`);
+      } catch (error) {
+        console.log(`${colors.yellow}⚠️ Failed to open DexScreener: ${error.message}${colors.reset}`);
+      }
       
       // Clear screen and return to main menu
       console.log(`\n${colors.cyan}Press SPACE to return to main menu...${colors.reset}`);
