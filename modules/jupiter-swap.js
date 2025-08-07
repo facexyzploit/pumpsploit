@@ -392,14 +392,9 @@ export async function performLiteSwap(fromMint, toMint, amount, wallet, slippage
         priceImpactPct: quote.priceImpactPct,
         routePlan: quote.routePlan
       },
-      prioritizationFeeLamports: {
-        priorityLevelWithMaxLamports: {
-          maxLamports: priorityLevel === 'veryHigh' ? 10000000 : 
-                       priorityLevel === 'high' ? 5000000 :
-                       priorityLevel === 'medium' ? 2000000 : 1000000,
-          priorityLevel: priorityLevel
-        }
-      },
+      prioritizationFeeLamports: priorityLevel === 'veryHigh' ? 10000000 : 
+                                 priorityLevel === 'high' ? 5000000 :
+                                 priorityLevel === 'medium' ? 2000000 : 1000000,
       dynamicComputeUnitLimit: true
     };
     

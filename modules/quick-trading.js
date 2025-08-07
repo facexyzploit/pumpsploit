@@ -237,13 +237,12 @@ export class QuickTrading {
             { name: '75%', value: 75 },
             { name: '100%', value: 100 },
             { name: 'Custom percentage', value: 'custom' },
-            { name: 'Enter sell initials', value: 'initials' }
+  
           ]
         }
       ]);
 
       let percentage;
-      let sellInitials = '';
       
       if (sellPercentage === 'custom') {
         const { customPercentage } = await inquirer.prompt([
@@ -261,56 +260,7 @@ export class QuickTrading {
           }
         ]);
         percentage = customPercentage;
-      } else if (sellPercentage === 'initials') {
-        const { initials } = await inquirer.prompt([
-          {
-            type: 'input',
-            name: 'initials',
-            message: 'Enter your initials for this sell transaction:',
-            validate: (input) => {
-              if (!input.trim()) return 'Initials are required';
-              if (input.length > 10) return 'Initials must be 10 characters or less';
-              return true;
-            }
-          }
-        ]);
-        sellInitials = initials;
-        
-        // After getting initials, ask for percentage
-        const { sellPercentageAfter } = await inquirer.prompt([
-          {
-            type: 'list',
-            name: 'sellPercentageAfter',
-            message: 'How much to sell?',
-            choices: [
-              { name: '25%', value: 25 },
-              { name: '50%', value: 50 },
-              { name: '75%', value: 75 },
-              { name: '100%', value: 100 },
-              { name: 'Custom percentage', value: 'custom' }
-            ]
-          }
-        ]);
-        
-        if (sellPercentageAfter === 'custom') {
-          const { customPercentage } = await inquirer.prompt([
-            {
-              type: 'input',
-              name: 'customPercentage',
-              message: 'Enter percentage to sell (1-100):',
-              validate: (input) => {
-                const num = parseFloat(input);
-                if (isNaN(num)) return 'Please enter a valid number';
-                if (num <= 0 || num > 100) return 'Percentage must be between 1 and 100';
-                return true;
-              },
-              filter: (input) => parseFloat(input)
-            }
-          ]);
-          percentage = customPercentage;
-        } else {
-          percentage = sellPercentageAfter;
-        }
+
       } else {
         percentage = sellPercentage;
       }
@@ -328,37 +278,9 @@ export class QuickTrading {
         amountInSmallestUnits
       );
 
-      // Get sell initials if not already provided
-      if (!sellInitials) {
-        const { sellInitialsInput } = await inquirer.prompt([
-          {
-            type: 'input',
-            name: 'sellInitialsInput',
-            message: 'Enter your initials for this sell transaction:',
-            validate: (input) => {
-              if (!input.trim()) return 'Initials are required';
-              if (input.length > 10) return 'Initials must be 10 characters or less';
-              return true;
-            }
-          }
-        ]);
-        sellInitials = sellInitialsInput;
-      }
-
-      // Confirm swap
-      const { confirm } = await inquirer.prompt([
-        {
-          type: 'confirm',
-          name: 'confirm',
-          message: `Confirm swap ${amountToSell.toLocaleString()} tokens (${percentage}%) for ${(quote.outAmount / LAMPORTS_PER_SOL).toFixed(6)} SOL?\nSell Initials: ${sellInitials}\nSlippage: ${settingsManager.get('slippageLimit')}%`,
-          default: false
-        }
-      ]);
-
-      if (!confirm) {
-        console.log(`${colors.yellow}⚠️ Swap cancelled${colors.reset}`);
-        return;
-      }
+      // Show quote summary and execute
+      console.log(`${colors.cyan}📊 Quote: ${amountToSell.toLocaleString()} tokens (${percentage}%) → ${(quote.outAmount / LAMPORTS_PER_SOL).toFixed(6)} SOL${colors.reset}`);
+      console.log(`${colors.green}🚀 Executing sell transaction...${colors.reset}`);
 
       // Perform swap
       const result = await performSwap(

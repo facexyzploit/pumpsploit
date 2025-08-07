@@ -7984,34 +7984,9 @@ async function handleSellToken(wallet) {
       amountInSmallestUnits
     );
 
-    // Get sell initials
-    const { sellInitials } = await inquirer.prompt([
-      {
-        type: 'input',
-        name: 'sellInitials',
-        message: 'Enter your initials for this sell transaction:',
-        validate: (input) => {
-          if (!input.trim()) return 'Initials are required';
-          if (input.length > 10) return 'Initials must be 10 characters or less';
-          return true;
-        }
-      }
-    ]);
-
-    // Confirm swap
-    const { confirm } = await inquirer.prompt([
-      {
-        type: 'confirm',
-        name: 'confirm',
-        message: `Confirm swap ${amountToSell.toLocaleString()} tokens (${percentage}%) for ${(quote.outAmount / LAMPORTS_PER_SOL).toFixed(6)} SOL?\nSell Initials: ${sellInitials}`,
-        default: false
-      }
-    ]);
-
-    if (!confirm) {
-      console.log(`${colors.yellow}⚠️ Swap cancelled${colors.reset}`);
-      return;
-    }
+    // Show quote summary
+    console.log(`${colors.cyan}📊 Quote: ${amountToSell.toLocaleString()} tokens (${percentage}%) → ${(quote.outAmount / LAMPORTS_PER_SOL).toFixed(6)} SOL${colors.reset}`);
+    console.log(`${colors.green}🚀 Executing sell transaction...${colors.reset}`);
 
     // Initialize transaction progress monitor
     const progressMonitor = new TransactionProgressMonitor();
