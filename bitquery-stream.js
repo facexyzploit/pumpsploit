@@ -643,7 +643,7 @@ async function checkJupiterTokenRealtime(tokenAddress) {
 }
 
 // Enhanced real-time token monitoring
-async function monitorTokenRealtime(tokenAddress, interval = 1000, state = null) {
+async function monitorTokenRealtime(tokenAddress, interval = 1000, state = null, walletInfo = null) {
   if (!state) {
     console.log(`${colors.cyan}🔄 Starting real-time monitoring for ${tokenAddress}${colors.reset}`);
     console.log(`${colors.yellow}Update interval: ${interval/1000}s${colors.reset}\n`);
@@ -659,7 +659,11 @@ async function monitorTokenRealtime(tokenAddress, interval = 1000, state = null)
       '30s': null,
       '1m': null,
       '5m': null
-    }
+    },
+    // Add wallet P&L tracking info
+    tokenBalance: walletInfo?.tokenBalance || null,
+    buyPrice: walletInfo?.buyPrice || null,
+    walletAddress: walletInfo?.walletAddress || null
   };
 
   const monitorInterval = setInterval(async () => {
@@ -752,10 +756,20 @@ function updateTimeChanges(monitoringData, currentUpdate) {
     
     if (closestUpdate && currentUpdate.price && closestUpdate.price) {
       const priceChange = ((currentUpdate.price - closestUpdate.price) / closestUpdate.price) * 100;
+      
+      // Calculate wallet P&L if we have token balance info
+      let walletPnL = undefined;
+      if (monitoringData.tokenBalance && monitoringData.buyPrice) {
+        const currentValue = monitoringData.tokenBalance * currentUpdate.price;
+        const previousValue = monitoringData.tokenBalance * closestUpdate.price;
+        walletPnL = currentValue - previousValue;
+      }
+      
       monitoringData.timeChanges[label] = {
         price: closestUpdate.price,
         change: priceChange,
-        timestamp: closestUpdate.timestamp
+        timestamp: closestUpdate.timestamp,
+        walletPnL: walletPnL
       };
     }
   });
@@ -790,7 +804,7 @@ function displayRealtimeUpdate(update, updateCount, timeChanges = {}) {
     console.log(`${colors.cyan}💧 Liquidity:${colors.reset} $${update.liquidity.toLocaleString()}`);
   }
 
-  // Display time-based changes
+  // Display time-based changes with wallet P&L
   console.log(`\n${colors.cyan}📊 Time-based Changes:${colors.reset}`);
   console.log(`${colors.white}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${colors.reset}`);
   
@@ -801,7 +815,16 @@ function displayRealtimeUpdate(update, updateCount, timeChanges = {}) {
       const changeColor = change.change >= 0 ? colors.green : colors.red;
       const changeSymbol = change.change >= 0 ? '↗' : '↘';
       const timeAgo = formatTimeAgo(change.timestamp);
-      console.log(`${colors.yellow}${label}:${colors.reset} ${changeColor}${changeSymbol} ${change.change.toFixed(2)}%${colors.reset} (${timeAgo})`);
+      
+      // Add wallet P&L if available
+      let walletPnL = '';
+      if (change.walletPnL !== undefined) {
+        const pnlColor = change.walletPnL >= 0 ? colors.green : colors.red;
+        const pnlSymbol = change.walletPnL >= 0 ? '📈' : '📉';
+        walletPnL = ` | ${pnlSymbol} ${pnlColor}Wallet: $${change.walletPnL.toFixed(2)}${colors.reset}`;
+      }
+      
+      console.log(`${colors.yellow}${label}:${colors.reset} ${changeColor}${changeSymbol} ${change.change.toFixed(2)}%${colors.reset} (${timeAgo})${walletPnL}`);
     } else {
       console.log(`${colors.yellow}${label}:${colors.reset} ${colors.gray}No data${colors.reset}`);
     }
@@ -7559,6 +7582,27 @@ async function handleBuyToken(wallet) {
       console.log(`${colors.yellow}⚠️ Could not calculate profit (new token)${colors.reset}`);
     }
     
+    // Start real-time price tracking after successful buy
+    console.log(`\n${colors.cyan}📊 Starting real-time price tracking...${colors.reset}`);
+    console.log(`${colors.yellow}💡 Press 'Q' to quit tracking | 'S' to sell now${colors.reset}\n`);
+    
+    // Calculate initial price from the buy quote
+    const initialPriceFromQuote = (amount * LAMPORTS_PER_SOL) / quote.outAmount;
+    console.log(`${colors.green}💰 Initial price from buy: $${initialPriceFromQuote.toFixed(8)}${colors.reset}`);
+    
+    // Start tracking in background with initial price
+    trackTokenAfterBuy(tokenMint, amount, quote.outAmount, wallet, initialPriceFromQuote);
+    
+    // Also start real-time monitoring with wallet P&L tracking
+    const walletInfo = {
+      tokenBalance: quote.outAmount,
+      buyPrice: initialPriceFromQuote,
+      walletAddress: wallet.publicKey.toString()
+    };
+    
+    // Start monitoring in background
+    monitorTokenRealtime(tokenMint, 3000, null, walletInfo);
+    
     // Emergency sell logic
     if (userAction === 'emergency_sell') {
       console.log(`${colors.red}🚨 EXECUTING EMERGENCY SELL...${colors.reset}`);
@@ -7648,6 +7692,183 @@ async function handleBuyToken(wallet) {
   }
 
   await waitForSpaceKey();
+}
+
+/**
+ * Track token price and wallet profit in real-time after a buy transaction
+ * @param {string} tokenMint - Token mint address
+ * @param {number} buyAmount - Amount spent in SOL
+ * @param {number} tokensReceived - Number of tokens received
+ * @param {Object} wallet - Wallet object
+ * @param {number} initialPriceFromQuote - Initial price calculated from buy quote
+ */
+async function trackTokenAfterBuy(tokenMint, buyAmount, tokensReceived, wallet, initialPriceFromQuote = null) {
+  console.log(`\n${colors.cyan}📊 Starting real-time price tracking...${colors.reset}`);
+  console.log(`${colors.yellow}💡 Press 'Q' to quit tracking | 'S' to sell now${colors.reset}\n`);
+  
+  let updateCount = 0;
+  const startTime = Date.now();
+  let highestPrice = 0;
+  let lowestPrice = Infinity;
+  let initialPrice = null;
+  
+  // Get token info for display
+  const tokenInfo = await getEnhancedTokenInfo(tokenMint);
+  const tokenSymbol = tokenInfo.symbol || tokenMint.slice(0, 4).toUpperCase();
+  
+  const trackingInterval = setInterval(async () => {
+    try {
+      updateCount++;
+      const currentTime = Date.now();
+      const elapsedSeconds = Math.floor((currentTime - startTime) / 1000);
+      
+      // Get current token price
+      const currentPrice = await getTokenPrice(tokenMint, true); // Silent mode
+      
+      // Check if we got a valid price (not the fallback value)
+      const isValidPrice = currentPrice > 0.00000001;
+      
+      // Set initial price from quote if available, otherwise from first valid API call
+      if (!initialPrice) {
+        if (initialPriceFromQuote) {
+          initialPrice = initialPriceFromQuote;
+          console.log(`${colors.green}✅ Using initial price from buy quote: $${initialPrice.toFixed(8)}${colors.reset}`);
+        } else if (isValidPrice) {
+          initialPrice = currentPrice;
+        }
+      }
+      
+      // Update highest/lowest prices only if we have valid prices
+      if (isValidPrice) {
+        if (currentPrice > highestPrice) highestPrice = currentPrice;
+        if (currentPrice < lowestPrice) lowestPrice = currentPrice;
+      }
+      
+      // Calculate current value and profit/loss
+      const currentValue = (tokensReceived * currentPrice) / LAMPORTS_PER_SOL;
+      const profitLoss = currentValue - buyAmount;
+      const profitLossPercent = ((profitLoss / buyAmount) * 100);
+      
+      // Calculate price change
+      const priceChange = currentPrice - initialPrice;
+      const priceChangePercent = ((priceChange / initialPrice) * 100);
+      
+      // Determine colors and symbols
+      const profitColor = profitLoss >= 0 ? colors.green : colors.red;
+      const priceColor = priceChange >= 0 ? colors.green : colors.red;
+      const profitSymbol = profitLoss >= 0 ? '📈' : '📉';
+      const priceSymbol = priceChange >= 0 ? '📈' : '📉';
+      
+      // Clear previous lines and display updated info
+      process.stdout.write('\x1B[2J\x1B[0f'); // Clear screen
+      
+      console.log(`${colors.cyan}🔄 Real-Time Token Tracking${colors.reset}`);
+      console.log(`${colors.white}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${colors.reset}`);
+      console.log(`${colors.yellow}Token: ${tokenSymbol} (${tokenMint.slice(0, 8)}...${tokenMint.slice(-8)})${colors.reset}`);
+      console.log(`${colors.cyan}Buy Amount: ${buyAmount} SOL${colors.reset}`);
+      console.log(`${colors.cyan}Tokens Received: ${tokensReceived.toLocaleString()}${colors.reset}`);
+      console.log(`${colors.cyan}Tracking Time: ${elapsedSeconds}s${colors.reset}`);
+      console.log('');
+      
+      // Price information
+      console.log(`${colors.magenta}💰 Price Information:${colors.reset}`);
+      
+      if (isValidPrice) {
+        console.log(`${colors.white}Current Price: ${priceColor}$${currentPrice.toFixed(8)}${colors.reset}`);
+        console.log(`${colors.white}Initial Price: $${initialPrice.toFixed(8)}${colors.reset}`);
+        console.log(`${priceSymbol} Price Change: ${priceColor}$${priceChange.toFixed(8)} (${priceChangePercent.toFixed(2)}%)${colors.reset}`);
+        console.log(`${colors.white}Highest Price: $${highestPrice.toFixed(8)}${colors.reset}`);
+        console.log(`${colors.white}Lowest Price: $${lowestPrice.toFixed(8)}${colors.reset}`);
+      } else if (initialPrice) {
+        // We have initial price from quote but no current API price
+        console.log(`${colors.white}Current Price: ${colors.yellow}API unavailable${colors.reset}`);
+        console.log(`${colors.white}Initial Price: $${initialPrice.toFixed(8)} (from buy quote)${colors.reset}`);
+        console.log(`${colors.white}Price Change: ${colors.yellow}Unknown${colors.reset}`);
+        console.log(`${colors.white}Highest Price: $${highestPrice > 0 ? highestPrice.toFixed(8) : 'No data'}${colors.reset}`);
+        console.log(`${colors.white}Lowest Price: $${lowestPrice < Infinity ? lowestPrice.toFixed(8) : 'No data'}${colors.reset}`);
+      } else {
+        console.log(`${colors.yellow}⚠️ Price data unavailable${colors.reset}`);
+        console.log(`${colors.white}Current Price: ${colors.yellow}No data${colors.reset}`);
+        console.log(`${colors.white}Initial Price: ${colors.yellow}No data${colors.reset}`);
+        console.log(`${colors.white}Price Change: ${colors.yellow}No data${colors.reset}`);
+        console.log(`${colors.white}Highest Price: ${colors.yellow}No data${colors.reset}`);
+        console.log(`${colors.white}Lowest Price: ${colors.yellow}No data${colors.reset}`);
+      }
+      console.log('');
+      
+      // Wallet profit/loss
+      console.log(`${colors.magenta}💼 Wallet P&L:${colors.reset}`);
+      if (isValidPrice) {
+        console.log(`${colors.white}Current Value: $${currentValue.toFixed(6)}${colors.reset}`);
+        console.log(`${profitSymbol} Profit/Loss: ${profitColor}$${profitLoss.toFixed(6)} (${profitLossPercent.toFixed(2)}%)${colors.reset}`);
+        console.log(`${colors.white}ROI: ${profitColor}${profitLossPercent.toFixed(2)}%${colors.reset}`);
+      } else {
+        console.log(`${colors.white}Current Value: ${colors.yellow}Unknown${colors.reset}`);
+        console.log(`${colors.white}Profit/Loss: ${colors.yellow}Unknown${colors.reset}`);
+        console.log(`${colors.white}ROI: ${colors.yellow}Unknown${colors.reset}`);
+      }
+      console.log('');
+      
+      // Performance indicators
+      console.log(`${colors.magenta}📊 Performance:${colors.reset}`);
+      
+      if (isValidPrice) {
+        const isProfitable = profitLoss > 0;
+        const isPriceUp = priceChange > 0;
+        
+        if (isProfitable && isPriceUp) {
+          console.log(`${colors.green}✅ Profitable & Price Rising${colors.reset}`);
+        } else if (isProfitable && !isPriceUp) {
+          console.log(`${colors.yellow}⚠️ Profitable but Price Falling${colors.reset}`);
+        } else if (!isProfitable && isPriceUp) {
+          console.log(`${colors.yellow}⚠️ Losing but Price Rising${colors.reset}`);
+        } else {
+          console.log(`${colors.red}❌ Losing & Price Falling${colors.reset}`);
+        }
+      } else {
+        console.log(`${colors.yellow}⚠️ Performance unknown (no price data)${colors.reset}`);
+      }
+      
+      console.log('');
+      console.log(`${colors.cyan}⌨️ Hotkeys: Q=Quit | S=Sell Now${colors.reset}`);
+      
+    } catch (error) {
+      console.log(`${colors.red}❌ Error updating price: ${error.message}${colors.reset}`);
+    }
+  }, 3000); // Update every 3 seconds
+  
+  // Set up hotkey listener
+  const originalRawMode = process.stdin.isRaw;
+  const originalEncoding = process.stdin.encoding;
+  
+  process.stdin.setRawMode(true);
+  process.stdin.resume();
+  process.stdin.setEncoding('utf8');
+  
+  const onData = (data) => {
+    const key = data.toLowerCase();
+    if (key === 'q') {
+      clearInterval(trackingInterval);
+      process.stdin.setRawMode(false);
+      process.stdin.pause();
+      process.stdin.setRawMode(originalRawMode);
+      process.stdin.setEncoding(originalEncoding);
+      process.stdin.removeListener('data', onData);
+      console.log(`\n${colors.yellow}📊 Tracking stopped${colors.reset}`);
+    } else if (key === 's') {
+      clearInterval(trackingInterval);
+      process.stdin.setRawMode(false);
+      process.stdin.pause();
+      process.stdin.setRawMode(originalRawMode);
+      process.stdin.setEncoding(originalEncoding);
+      process.stdin.removeListener('data', onData);
+      console.log(`\n${colors.red}🚨 Selling tokens now...${colors.reset}`);
+      // Trigger sell function
+      handleSellToken(wallet);
+    }
+  };
+  
+  process.stdin.on('data', onData);
 }
 
 async function displayTokenList(tokens) {
@@ -7952,6 +8173,25 @@ async function handleSellToken(wallet) {
         console.log(`   💰 Balance: ${token.balance.toLocaleString()}`);
         console.log(`   📝 Name: ${nameColor}${token.name}${colors.reset}`);
         
+        // Get detailed token information
+        try {
+          const tokenPrice = await getTokenPrice(token.mint, true); // Silent mode
+          const tokenPnL = await calculateTokenPnL(token.mint, token.balance);
+          
+          if (tokenPrice > 0.00000001) {
+            console.log(`   💵 Price: $${tokenPrice.toFixed(8)}`);
+            console.log(`   💎 Value: $${tokenPnL.currentValue.toFixed(2)}`);
+            
+            if (tokenPnL.pnlPercent !== 0) {
+              const pnlColor = tokenPnL.pnlPercent >= 0 ? colors.green : colors.red;
+              const pnlSymbol = tokenPnL.pnlPercent >= 0 ? '📈' : '📉';
+              console.log(`   ${pnlSymbol} PnL: ${pnlColor}$${tokenPnL.pnl.toFixed(2)} (${tokenPnL.pnlPercent.toFixed(2)}%)${colors.reset}`);
+            }
+          }
+        } catch (error) {
+          // Silent error for price fetching - don't show error messages
+        }
+        
         // Add additional info for known tokens
         if (isKnownToken) {
           console.log(`   ✅ Verified Token`);
@@ -7962,16 +8202,31 @@ async function handleSellToken(wallet) {
       }
       
       // Create enhanced token choices with better display
-      const tokenChoices = tokens.map((token, index) => {
+      const tokenChoices = await Promise.all(tokens.map(async (token, index) => {
         const isKnownToken = token.name !== 'Unknown Token' && token.name !== `${token.symbol} Token`;
         const tickerDisplay = isKnownToken ? `[${token.symbol}]` : '';
         const tokenStatus = isKnownToken ? '✅' : '⚠️';
         
+        // Get price and PnL for display
+        let priceInfo = '';
+        try {
+          const tokenPrice = await getTokenPrice(token.mint, true); // Silent mode
+          const tokenPnL = await calculateTokenPnL(token.mint, token.balance);
+          
+          if (tokenPrice > 0.00000001) {
+            const pnlColor = tokenPnL.pnlPercent >= 0 ? colors.green : colors.red;
+            const pnlSymbol = tokenPnL.pnlPercent >= 0 ? '📈' : '📉';
+            priceInfo = ` | $${tokenPrice.toFixed(6)} | ${pnlSymbol} ${pnlColor}${tokenPnL.pnlPercent.toFixed(1)}%${colors.reset}`;
+          }
+        } catch (error) {
+          // Silent error - don't show error messages
+        }
+        
         return {
-          name: `${index + 1}. ${tokenStatus} ${token.symbol} ${tickerDisplay} - ${token.balance.toLocaleString()} tokens`,
+          name: `${index + 1}. ${tokenStatus} ${token.symbol} ${tickerDisplay} - ${token.balance.toLocaleString()} tokens${priceInfo}`,
           value: token
         };
-      });
+      }));
 
       // Add options with refresh
       tokenChoices.push(

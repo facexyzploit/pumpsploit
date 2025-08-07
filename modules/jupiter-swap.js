@@ -465,15 +465,29 @@ export async function performLiteSwap(fromMint, toMint, amount, wallet, slippage
     };
     
   } catch (error) {
-    // Check for specific Jupiter errors that indicate low liquidity
+    // Check for specific Jupiter errors that indicate low liquidity or slippage issues
     const errorMessage = error.message.toLowerCase();
     const isLowLiquidityError = errorMessage.includes('0x1788') || 
+                                errorMessage.includes('0x1771') ||
                                 errorMessage.includes('insufficient liquidity') ||
                                 errorMessage.includes('slippage exceeded') ||
-                                errorMessage.includes('price impact too high');
+                                errorMessage.includes('price impact too high') ||
+                                errorMessage.includes('simulation failed');
     
     if (isLowLiquidityError) {
-      console.log(`${colors.yellow}⚠️ Low liquidity detected. Trying with smaller amount...${colors.reset}`);
+      console.log(`${colors.yellow}⚠️ Low liquidity or slippage issue detected. Trying solutions...${colors.reset}`);
+      
+      // For 0x1771 errors, try with increased slippage first
+      if (errorMessage.includes('0x1771')) {
+        const increasedSlippage = slippage ? slippage * 2 : 10; // Double the slippage or use 10%
+        console.log(`${colors.cyan}🔄 Retrying with increased slippage (${increasedSlippage}%)...${colors.reset}`);
+        
+        try {
+          return await performLiteSwap(fromMint, toMint, amount, wallet, increasedSlippage, priorityLevel);
+        } catch (slippageError) {
+          console.log(`${colors.yellow}⚠️ Increased slippage failed, trying smaller amount...${colors.reset}`);
+        }
+      }
       
       // Try with 50% of the original amount
       const smallerAmount = Math.floor(amount * 0.5);
@@ -494,17 +508,49 @@ export async function performLiteSwap(fromMint, toMint, amount, wallet, slippage
       }
       
       // If all retries fail, provide helpful error message
-      console.error(`${colors.red}❌ Token has very low liquidity. Try selling smaller amounts manually.${colors.reset}`);
-      console.log(`${colors.yellow}💡 Suggested solutions:${colors.reset}`);
-      console.log(`   • Try selling 25% or 50% instead of 100%`);
-      console.log(`   • Check if the token has any liquidity on Jupiter`);
-      console.log(`   • Consider burning the tokens instead`);
+      if (errorMessage.includes('0x1771')) {
+        console.error(`${colors.red}❌ Jupiter Error 0x1771: Slippage tolerance exceeded or insufficient liquidity${colors.reset}`);
+        console.log(`${colors.yellow}💡 Suggested solutions:${colors.reset}`);
+        console.log(`   • Increase slippage tolerance in settings`);
+        console.log(`   • Try with smaller amounts (25% or 50%)`);
+        console.log(`   • Check if token has sufficient liquidity`);
+        console.log(`   • Consider using regular swap instead of Lite API`);
+        console.log(`   • Try burning tokens if they can't be sold`);
+      } else {
+        console.error(`${colors.red}❌ Token has very low liquidity. Try selling smaller amounts manually.${colors.reset}`);
+        console.log(`${colors.yellow}💡 Suggested solutions:${colors.reset}`);
+        console.log(`   • Try selling 25% or 50% instead of 100%`);
+        console.log(`   • Check if the token has any liquidity on Jupiter`);
+        console.log(`   • Consider burning the tokens instead`);
+      }
       
     } else {
       console.error(`${colors.red}❌ Lite swap failed: ${error.message}${colors.reset}`);
     }
     
-    logToFile(`Jupiter Lite swap error: ${error.message}`, 'error');
+
+    // Enhanced error logging with more details
+    const errorDetails = {
+      error: error.message,
+      fromMint,
+      toMint,
+      amount,
+      slippage,
+      priorityLevel,
+      timestamp: new Date().toISOString()
+    };
+    
+    logToFile(`Jupiter Lite swap error: ${JSON.stringify(errorDetails)}`, 'error');
+    
+    // Provide specific error analysis
+    if (errorMessage.includes('0x1771')) {
+      console.log(`${colors.cyan}🔍 Error Analysis: 0x1771 = Slippage tolerance exceeded${colors.reset}`);
+      console.log(`${colors.yellow}💡 This usually means:${colors.reset}`);
+      console.log(`   • Price moved too much during transaction`);
+      console.log(`   • Token has low liquidity causing high slippage`);
+      console.log(`   • Network congestion affecting transaction timing`);
+    }
+    
     throw error;
   }
 }
@@ -1036,13 +1082,13 @@ export async function validateSwap(fromMint, toMint, amount, wallet) {
  * @param {string} mintAddress - Token mint address
  * @returns {Promise<number>} Token price in USD
  */
-export async function getTokenPrice(mintAddress) {
+export async function getTokenPrice(mintAddress, silent = false) {
   try {
-    // Use Jupiter price API with timeout and retry
+    // Try Jupiter Lite API first (more reliable)
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 second timeout
     
-    const response = await fetch(`https://price.jup.ag/v4/price?ids=${mintAddress}`, {
+    const response = await fetch(`https://lite-api.jup.ag/price/v3?ids=${mintAddress}`, {
       signal: controller.signal,
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
@@ -1051,21 +1097,87 @@ export async function getTokenPrice(mintAddress) {
     
     clearTimeout(timeoutId);
     
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${await response.text()}`);
-    }
-    
-    const data = await response.json();
-    const priceData = data.data[mintAddress];
-    
-    if (priceData) {
-      return priceData.price;
+    if (response.ok) {
+      const data = await response.json();
+      const priceData = data[mintAddress]; // Direct access, no .data wrapper
+      
+      if (priceData && priceData.usdPrice > 0) {
+        if (!silent) console.log(`${colors.green}✅ Jupiter Lite API: $${priceData.usdPrice}${colors.reset}`);
+        return priceData.usdPrice;
+      } else {
+        if (!silent) console.log(`${colors.yellow}⚠️ Jupiter Lite API: No price data for ${mintAddress}${colors.reset}`);
+      }
     } else {
-      return 0;
+      if (!silent) console.log(`${colors.yellow}⚠️ Jupiter Lite API: HTTP ${response.status}${colors.reset}`);
     }
+    
+    // Fallback: Try to get price via Jupiter Lite Quote API
+    try {
+      if (!silent) console.log(`${colors.cyan}🔄 Trying Jupiter Lite Quote API...${colors.reset}`);
+      const quoteResponse = await fetch('https://lite-api.jup.ag/quote/v1', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        },
+        body: JSON.stringify({
+          inputMint: mintAddress,
+          outputMint: 'So11111111111111111111111111111111111111112', // SOL
+          amount: '1000000000', // 1 token (assuming 9 decimals)
+          slippageBps: 50
+        })
+      });
+      
+      if (quoteResponse.ok) {
+        const quoteData = await quoteResponse.json();
+        if (quoteData.outAmount && quoteData.inAmount) {
+          // Calculate price: SOL amount / token amount
+          const solAmount = quoteData.outAmount / LAMPORTS_PER_SOL;
+          const tokenAmount = quoteData.inAmount / 1000000000; // Assuming 9 decimals
+          const calculatedPrice = solAmount / tokenAmount;
+          if (!silent) console.log(`${colors.green}✅ Jupiter Lite Quote API: $${calculatedPrice}${colors.reset}`);
+          return calculatedPrice;
+        } else {
+          if (!silent) console.log(`${colors.yellow}⚠️ Jupiter Lite Quote API: Invalid quote data${colors.reset}`);
+        }
+      } else {
+        if (!silent) console.log(`${colors.yellow}⚠️ Jupiter Lite Quote API: HTTP ${quoteResponse.status}${colors.reset}`);
+      }
+    } catch (quoteError) {
+      if (!silent) console.log(`${colors.yellow}⚠️ Jupiter Lite Quote API error: ${quoteError.message}${colors.reset}`);
+    }
+    
+    // Final fallback: Try Birdeye API
+    try {
+      if (!silent) console.log(`${colors.cyan}🔄 Trying Birdeye API...${colors.reset}`);
+      const birdeyeResponse = await fetch(`https://public-api.birdeye.so/public/price?address=${mintAddress}`, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
+      });
+      
+      if (birdeyeResponse.ok) {
+        const birdeyeData = await birdeyeResponse.json();
+        if (birdeyeData.data && birdeyeData.data.value > 0) {
+          if (!silent) console.log(`${colors.green}✅ Birdeye API: $${birdeyeData.data.value}${colors.reset}`);
+          return birdeyeData.data.value;
+        } else {
+          if (!silent) console.log(`${colors.yellow}⚠️ Birdeye API: No price data${colors.reset}`);
+        }
+      } else {
+        if (!silent) console.log(`${colors.yellow}⚠️ Birdeye API: HTTP ${birdeyeResponse.status}${colors.reset}`);
+      }
+    } catch (birdeyeError) {
+      if (!silent) console.log(`${colors.yellow}⚠️ Birdeye API error: ${birdeyeError.message}${colors.reset}`);
+    }
+    
+    // If all methods fail, return a small non-zero value to avoid division by zero
+    if (!silent) console.log(`${colors.red}❌ All price APIs failed for ${mintAddress}${colors.reset}`);
+    return 0.00000001; // Very small value to indicate no price data
+    
   } catch (error) {
-    // Silent error for price API to avoid spam
-    return 0;
+    if (!silent) console.log(`${colors.red}❌ Price API error: ${error.message}${colors.reset}`);
+    return 0.00000001; // Very small value to indicate no price data
   }
 }
 
@@ -1078,7 +1190,7 @@ export async function getTokenPrice(mintAddress) {
  */
 export async function calculateTokenPnL(mintAddress, balance, avgPrice = 0) {
   try {
-    const currentPrice = await getTokenPrice(mintAddress);
+    const currentPrice = await getTokenPrice(mintAddress, true); // Silent mode
     const currentValue = balance * currentPrice;
     
     let pnl = 0;
