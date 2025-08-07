@@ -96,6 +96,20 @@ export const modeDescriptions = {
       '• Volume and price change analysis',
       '• Custom trend monitoring'
     ]
+  },
+  trending: {
+    title: `${colors.magenta}🔥 Trending & Gainers (5m)${colors.reset}`,
+    description: [
+      'Monitors trending and gaining tokens in the last 5 minutes.',
+      'Features:',
+      '• Real-time price change tracking',
+      '• Volume surge detection',
+      '• Trade frequency analysis',
+      '• Momentum scoring',
+      '• Automatic gain calculation',
+      '• Jupiter API integration',
+      '• Market cap and liquidity tracking'
+    ]
   }
 };
 
@@ -420,6 +434,11 @@ export async function showInitialQueryMenu() {
           name: `${colors.purple}[5] GMGN Trend Monitoring${colors.reset} - Monitor tokens from GMGN trend links`,
           value: 'gmgnTrend',
           short: 'GMGN Trend'
+        },
+        {
+          name: `${colors.magenta}[6] 🔥 Trending & Gainers (5m)${colors.reset} - Monitor trending tokens in last 5 minutes`,
+          value: 'trending',
+          short: 'Trending & Gainers'
         }
       ]
     }

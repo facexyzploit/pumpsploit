@@ -142,34 +142,71 @@ class KeyboardHandler {
   }
 
   async handleNextToken() {
-    console.log(`${colors.cyan}🔄 Navigating to next token...${colors.reset}`);
-    console.log(`${colors.yellow}Current index: ${this.state.currentTokenIndex}, Total trades: ${this.state.trades.length}${colors.reset}`);
-    
-    if (this.state.currentTokenIndex < this.state.trades.length - 1) {
-      await this.state.displayTrade(this.state.currentTokenIndex + 1);
+    // Handle trending mode differently
+    if (this.state.getMode() === 'trending') {
+      console.log(`${colors.cyan}🔄 Navigating to next trending token...${colors.reset}`);
+      if (this.state.hasNextTrendingToken()) {
+        this.state.nextTrendingToken();
+        const trendingData = this.state.getTrendingData();
+        const index = this.state.getCurrentTrendingIndex();
+        // Import displayTrendingToken function
+        const { displayTrendingToken } = await import('./bitquery-stream.js');
+        displayTrendingToken(index, trendingData);
+      } else {
+        console.log(`${colors.yellow}⚠️ No more trending tokens to display${colors.reset}`);
+      }
     } else {
-      // Auto-continue with last remembered mode
-      const lastMode = this.settings?.lastSelectedMode || this.state.getMode();
-      console.log(`\n${colors.cyan}🔄 Auto-continuing with last mode: ${lastMode}${colors.reset}`);
-      await this.startStream(lastMode);
+      console.log(`${colors.cyan}🔄 Navigating to next token...${colors.reset}`);
+      console.log(`${colors.yellow}Current index: ${this.state.currentTokenIndex}, Total trades: ${this.state.trades.length}${colors.reset}`);
+      
+      if (this.state.currentTokenIndex < this.state.trades.length - 1) {
+        await this.state.displayTrade(this.state.currentTokenIndex + 1);
+      } else {
+        // Auto-continue with last remembered mode
+        const lastMode = this.settings?.lastSelectedMode || this.state.getMode();
+        console.log(`\n${colors.cyan}🔄 Auto-continuing with last mode: ${lastMode}${colors.reset}`);
+        await this.startStream(lastMode);
+      }
     }
   }
 
   async handlePreviousToken() {
-    if (this.state.currentTokenIndex > 0) {
-      await this.state.displayTrade(this.state.currentTokenIndex - 1);
+    // Handle trending mode differently
+    if (this.state.getMode() === 'trending') {
+      console.log(`${colors.cyan}🔄 Navigating to previous trending token...${colors.reset}`);
+      if (this.state.hasPreviousTrendingToken()) {
+        this.state.previousTrendingToken();
+        const trendingData = this.state.getTrendingData();
+        const index = this.state.getCurrentTrendingIndex();
+        // Import displayTrendingToken function
+        const { displayTrendingToken } = await import('./bitquery-stream.js');
+        displayTrendingToken(index, trendingData);
+      } else {
+        console.log(`${colors.yellow}⚠️ No previous trending tokens to display${colors.reset}`);
+      }
+    } else {
+      if (this.state.currentTokenIndex > 0) {
+        await this.state.displayTrade(this.state.currentTokenIndex - 1);
+      }
     }
   }
 
   async handleCopyAddress() {
-    const currentTrade = this.state.trades[this.state.currentTokenIndex];
-    
-    // Handle different data structures based on current mode
     let tokenAddress;
-    if (this.state.getMode() === 'graduated') {
-      tokenAddress = currentTrade?.Pool?.Market?.BaseCurrency?.MintAddress;
+    
+    // Handle trending mode differently
+    if (this.state.getMode() === 'trending') {
+      const currentTrendingToken = this.state.getCurrentTrendingToken();
+      tokenAddress = currentTrendingToken?.token?.MintAddress;
     } else {
-      tokenAddress = currentTrade?.Trade?.Buy?.Currency?.MintAddress;
+      const currentTrade = this.state.trades[this.state.currentTokenIndex];
+      
+      // Handle different data structures based on current mode
+      if (this.state.getMode() === 'graduated') {
+        tokenAddress = currentTrade?.Pool?.Market?.BaseCurrency?.MintAddress;
+      } else {
+        tokenAddress = currentTrade?.Trade?.Buy?.Currency?.MintAddress;
+      }
     }
     
     if (tokenAddress) {
@@ -179,14 +216,21 @@ class KeyboardHandler {
   }
 
   async handleOpenGMGN() {
-    const activeToken = this.state.trades[this.state.currentTokenIndex];
-    
-    // Handle different data structures based on current mode
     let tokenAddress;
-    if (this.state.getMode() === 'graduated') {
-      tokenAddress = activeToken?.Pool?.Market?.BaseCurrency?.MintAddress;
+    
+    // Handle trending mode differently
+    if (this.state.getMode() === 'trending') {
+      const currentTrendingToken = this.state.getCurrentTrendingToken();
+      tokenAddress = currentTrendingToken?.token?.MintAddress;
     } else {
-      tokenAddress = activeToken?.Trade?.Buy?.Currency?.MintAddress;
+      const activeToken = this.state.trades[this.state.currentTokenIndex];
+      
+      // Handle different data structures based on current mode
+      if (this.state.getMode() === 'graduated') {
+        tokenAddress = activeToken?.Pool?.Market?.BaseCurrency?.MintAddress;
+      } else {
+        tokenAddress = activeToken?.Trade?.Buy?.Currency?.MintAddress;
+      }
     }
     
     if (tokenAddress) {
@@ -196,14 +240,21 @@ class KeyboardHandler {
   }
 
   async handleTelegramSend() {
-    const telegramToken = this.state.trades[this.state.currentTokenIndex];
-    
-    // Handle different data structures based on current mode
     let mintAddress;
-    if (this.state.getMode() === 'graduated') {
-      mintAddress = telegramToken?.Pool?.Market?.BaseCurrency?.MintAddress;
+    
+    // Handle trending mode differently
+    if (this.state.getMode() === 'trending') {
+      const currentTrendingToken = this.state.getCurrentTrendingToken();
+      mintAddress = currentTrendingToken?.token?.MintAddress;
     } else {
-      mintAddress = telegramToken?.Trade?.Buy?.Currency?.MintAddress;
+      const telegramToken = this.state.trades[this.state.currentTokenIndex];
+      
+      // Handle different data structures based on current mode
+      if (this.state.getMode() === 'graduated') {
+        mintAddress = telegramToken?.Pool?.Market?.BaseCurrency?.MintAddress;
+      } else {
+        mintAddress = telegramToken?.Trade?.Buy?.Currency?.MintAddress;
+      }
     }
     
     if (mintAddress) {
@@ -220,16 +271,23 @@ class KeyboardHandler {
   }
 
   async handleJupiterRealtimeMonitoring() {
-    const currentTrade = this.state.getCurrentTrade();
-    
-    // Handle different data structures based on current mode
     let tokenAddress;
-    if (this.state.getMode() === 'graduated') {
-      // For graduated mode, we have Pool structure
-      tokenAddress = currentTrade?.Pool?.Market?.BaseCurrency?.MintAddress;
+    
+    // Handle trending mode differently
+    if (this.state.getMode() === 'trending') {
+      const currentTrendingToken = this.state.getCurrentTrendingToken();
+      tokenAddress = currentTrendingToken?.token?.MintAddress;
     } else {
-      // For other modes, we have Trade structure
-      tokenAddress = currentTrade?.Trade?.Buy?.Currency?.MintAddress;
+      const currentTrade = this.state.getCurrentTrade();
+      
+      // Handle different data structures based on current mode
+      if (this.state.getMode() === 'graduated') {
+        // For graduated mode, we have Pool structure
+        tokenAddress = currentTrade?.Pool?.Market?.BaseCurrency?.MintAddress;
+      } else {
+        // For other modes, we have Trade structure
+        tokenAddress = currentTrade?.Trade?.Buy?.Currency?.MintAddress;
+      }
     }
     
     if (!tokenAddress) {

@@ -654,6 +654,56 @@ class AppState {
     return this.currentMode;
   }
 
+  // Trending data management
+  setTrendingData(trendingData) {
+    this.trendingData = trendingData;
+  }
+
+  getTrendingData() {
+    return this.trendingData || [];
+  }
+
+  setCurrentTrendingIndex(index) {
+    this.currentTrendingIndex = index;
+  }
+
+  getCurrentTrendingIndex() {
+    return this.currentTrendingIndex || 0;
+  }
+
+  getCurrentTrendingToken() {
+    const trendingData = this.getTrendingData();
+    const index = this.getCurrentTrendingIndex();
+    return trendingData[index] || null;
+  }
+
+  hasNextTrendingToken() {
+    const trendingData = this.getTrendingData();
+    const index = this.getCurrentTrendingIndex();
+    return index < trendingData.length - 1;
+  }
+
+  hasPreviousTrendingToken() {
+    const index = this.getCurrentTrendingIndex();
+    return index > 0;
+  }
+
+  nextTrendingToken() {
+    if (this.hasNextTrendingToken()) {
+      this.currentTrendingIndex++;
+      return true;
+    }
+    return false;
+  }
+
+  previousTrendingToken() {
+    if (this.hasPreviousTrendingToken()) {
+      this.currentTrendingIndex--;
+      return true;
+    }
+    return false;
+  }
+
   displayInstruction(instruction, index) {
     const program = instruction.Instruction.Program;
     const accounts = instruction.Instruction.Accounts;

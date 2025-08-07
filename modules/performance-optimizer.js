@@ -15,6 +15,11 @@ export class PerformanceOptimizer {
     this.performanceMetrics = new Map();
     this.cleanupInterval = null;
     
+    // Initialize default caches
+    this.createCache('tokenInfo', 30000); // 30 seconds
+    this.createCache('tokenPrices', 30000); // 30 seconds
+    this.createCache('walletBalances', 60000); // 1 minute
+    
     // Start cleanup interval
     this.startCleanupInterval();
   }

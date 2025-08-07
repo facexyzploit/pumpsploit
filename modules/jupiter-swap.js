@@ -428,7 +428,7 @@ export async function performSwap(fromMint, toMint, amount, wallet, slippage = n
  * @param {string} priorityLevel - Priority level: 'low', 'medium', 'high', 'veryHigh'
  * @returns {Promise<Object>} Swap result
  */
-export async function performLiteSwap(fromMint, toMint, amount, wallet, slippage = null, priorityLevel = 'high') {
+export async function performLiteSwap(fromMint, toMint, amount, wallet, slippage = null, priorityLevel = 'high', retryDepth = 0) {
   try {
     console.log(`${colors.cyan}🚀 Starting Lite swap...${colors.reset}`);
     console.log(`${colors.yellow}From: ${fromMint}${colors.reset}`);
@@ -542,6 +542,11 @@ export async function performLiteSwap(fromMint, toMint, amount, wallet, slippage
     
     if (isLowLiquidityError) {
       console.log(`${colors.yellow}⚠️ Low liquidity or slippage issue detected. Trying solutions...${colors.reset}`);
+      const MAX_RETRY_DEPTH = 3;
+      if (retryDepth >= MAX_RETRY_DEPTH) {
+        console.log(`${colors.yellow}⚠️ Reached max retry attempts for Lite swap${colors.reset}`);
+        throw error;
+      }
       
       // For 0x1771 errors, try with increased slippage first
       if (errorMessage.includes('0x1771')) {
@@ -549,7 +554,7 @@ export async function performLiteSwap(fromMint, toMint, amount, wallet, slippage
         console.log(`${colors.cyan}🔄 Retrying with increased slippage (${increasedSlippage}%)...${colors.reset}`);
         
         try {
-          return await performLiteSwap(fromMint, toMint, amount, wallet, increasedSlippage, priorityLevel);
+          return await performLiteSwap(fromMint, toMint, amount, wallet, increasedSlippage, priorityLevel, retryDepth + 1);
         } catch (slippageError) {
           console.log(`${colors.yellow}⚠️ Increased slippage failed, trying smaller amount...${colors.reset}`);
         }
@@ -561,14 +566,14 @@ export async function performLiteSwap(fromMint, toMint, amount, wallet, slippage
       if (smallerAmount > 0) {
         try {
           console.log(`${colors.cyan}🔄 Retrying with ${smallerAmount.toLocaleString()} tokens (50% of original)${colors.reset}`);
-          return await performLiteSwap(fromMint, toMint, smallerAmount, wallet, slippage, priorityLevel);
+          return await performLiteSwap(fromMint, toMint, smallerAmount, wallet, slippage, priorityLevel, retryDepth + 1);
         } catch (retryError) {
           // If 50% still fails, try with 25%
           const evenSmallerAmount = Math.floor(amount * 0.25);
           
           if (evenSmallerAmount > 0) {
             console.log(`${colors.cyan}🔄 Retrying with ${evenSmallerAmount.toLocaleString()} tokens (25% of original)${colors.reset}`);
-            return await performLiteSwap(fromMint, toMint, evenSmallerAmount, wallet, slippage, priorityLevel);
+            return await performLiteSwap(fromMint, toMint, evenSmallerAmount, wallet, slippage, priorityLevel, retryDepth + 1);
           }
         }
       }

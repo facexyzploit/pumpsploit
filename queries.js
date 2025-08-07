@@ -4,7 +4,7 @@ const pumpTradesQuery = {
     Solana {
       DEXTrades(
         limitBy: {count: 1, by: Trade_Buy_Currency_MintAddress}
-        limit: {count: 20}
+        limit: {count: 30}
         orderBy: {descending: Block_Time}
         where: {Trade: {Buy: {PriceInUSD: {gt: 0.000001}, Currency: {MintAddress: {notIn: ["11111111111111111111111111111111"]}}, Price: {}}, Sell: {AmountInUSD: {gt: "9"}}, Dex: {ProtocolName: {is: "pump"}}, Market: {}}, Transaction: {Result: {Success: true}}}
       ) {
@@ -59,7 +59,7 @@ const pumpfunCrossMarketQuery = {
   query: `{
     Solana {
       DEXTrades(
-        limit: {count: 50}
+        limit: {count: 30}
         orderBy: {descending: Block_Time}
         where: {Trade: {Dex: {ProtocolName: {is: "pump"}}, Buy: {Currency: {MintAddress: {notIn: ["11111111111111111111111111111111"]}}, PriceInUSD: {gt: 0.000001}}, Sell: {AmountInUSD: {gt: "10"}}}, Transaction: {Result: {Success: true}}}
       ) {
@@ -222,7 +222,7 @@ const graduatedQuery = {
   Solana {
     DEXPools(
       limitBy: { by: Pool_Market_BaseCurrency_MintAddress, count: 1 }
-      limit: { count: 100 }
+      limit: { count: 30 }
       orderBy: { ascending: Pool_Base_PostAmount }
       where: {
         Pool: {
@@ -284,7 +284,7 @@ const monitoringMoreQuery = {
   Solana {
     DEXPools(
       limitBy: { by: Pool_Market_BaseCurrency_MintAddress, count: 1 }
-      limit: { count: 10 }
+      limit: { count: 30 }
       orderBy: { ascending: Pool_Base_PostAmount }
       where: {
         Pool: {
@@ -343,7 +343,7 @@ const fallbackQuery = {
   query: `{
     Solana {
       DEXTrades(
-        limit: {count: 100}
+        limit: {count: 30}
         orderBy: {descending: Block_Time}
         where: {Trade: {Dex: {ProtocolName: {is: "pump"}}, Buy: {Currency: {MintAddress: {notIn: ["11111111111111111111111111111111"]}}}}, Transaction: {Result: {Success: true}}}
       ) {
@@ -385,12 +385,183 @@ const fallbackQuery = {
   variables: { }
 };
 
+// Tokens with minimum 500 transactions (buy/sell) within a recent window
+// This query gets all trades and we'll filter by transaction count in the application
+const tokensMin500TxQuery = {
+  query: `{
+    Solana {
+      DEXTrades(
+        limit: {count: 30}
+        orderBy: {descending: Block_Time}
+        where: {
+          Trade: {
+            Dex: {ProtocolName: {is: "pump"}},
+            Buy: {
+              Currency: {MintAddress: {notIn: ["11111111111111111111111111111111"]}},
+              PriceInUSD: {gt: 0.000001}
+            },
+            Sell: {AmountInUSD: {gt: "9"}}
+          },
+          Block: {Time: {since_relative: {minutes_ago: 60}}},
+          Transaction: {Result: {Success: true}}
+        }
+      ) {
+        Trade {
+          Buy {
+            Currency {
+              Name
+              Symbol
+              MintAddress
+              Decimals
+              Fungible
+              Uri
+            }
+            Price
+            PriceInUSD
+            Amount
+          }
+          Sell {
+            Amount
+            AmountInUSD
+            Currency {
+              Name
+              Symbol
+              MintAddress
+              Decimals
+              Fungible
+              Uri
+            }
+          }
+          Dex {
+            ProtocolName
+            ProtocolFamily
+          }
+          Market {
+            MarketAddress
+          }
+        }
+        Block {
+          Time
+        }
+        Transaction {
+          Signature
+        }
+      }
+    }
+  }`,
+  variables: { }
+};
+
+// Trending and Gainers Query - Last 5 minutes
+const trendingGainersQuery = {
+  query: `{
+    Solana {
+      # Get trades from last 5 minutes
+      recentTrades: DEXTrades(
+        limit: {count: 30}
+        orderBy: {descending: Block_Time}
+        where: {
+          Block: {Time: {since_relative: {minutes_ago: 5}}}
+          Trade: {
+            Dex: {
+              ProtocolFamily: { in: ["Raydium", "Orca", "Jupiter", "Pumpfun", "Lanswap"] }
+            },
+            Buy: {
+              Currency: {MintAddress: {notIn: ["11111111111111111111111111111111"]}},
+              PriceInUSD: {gt: 0.000001}
+            }
+          },
+          Transaction: {Result: {Success: true}}
+        }
+      ) {
+        Trade {
+          Buy {
+            Currency {
+              Name
+              Symbol
+              MintAddress
+              Decimals
+              Fungible
+              Uri
+            }
+            Price
+            PriceInUSD
+            Amount
+            AmountInUSD
+          }
+          Sell {
+            Amount
+            AmountInUSD
+            Currency {
+              Symbol
+              MintAddress
+            }
+          }
+          Dex {
+            ProtocolName
+            ProtocolFamily
+          }
+          Market {
+            MarketAddress
+          }
+        }
+        Block {
+          Time
+        }
+        Transaction {
+          Signature
+        }
+      }
+      
+      # Get previous 5 minutes for price comparison
+      previousTrades: DEXTrades(
+        limit: {count: 1000}
+        orderBy: {descending: Block_Time}
+        where: {
+          Block: {
+            Time: {
+              since_relative: {minutes_ago: 10},
+              till_relative: {minutes_ago: 5}
+            }
+          },
+          Trade: {
+            Dex: {
+              ProtocolFamily: { in: ["Raydium", "Orca", "Jupiter", "Pumpfun", "Lanswap"] }
+            },
+            Buy: {
+              Currency: {MintAddress: {notIn: ["11111111111111111111111111111111"]}},
+              PriceInUSD: {gt: 0.000001}
+            }
+          },
+          Transaction: {Result: {Success: true}}
+        }
+      ) {
+        Trade {
+          Buy {
+            Currency {
+              MintAddress
+            }
+            PriceInUSD
+            AmountInUSD
+          }
+        }
+        Block {
+          Time
+        }
+      }
+    }
+  }`,
+  variables: { }
+};
+
 // Query selection helper (optional, for legacy code)
 function getQueryConfig(queryType = 'pump') {
   if (queryType === 'pumpfunCrossMarket') return pumpfunCrossMarketQuery;
   if (queryType === 'pumpfunNewTokens') return pumpfunNewTokensQuery;
   if (queryType === 'monitoringMore') return monitoringMoreQuery;
   if (queryType === 'graduated') return graduatedQuery;
+  if (queryType === 'min500tx') return tokensMin500TxQuery;
+  if (queryType === 'trending') return trendingGainersQuery;
   return pumpTradesQuery;
 }
 
@@ -408,5 +579,7 @@ export {
   pumpfunNewTokensQuery,
   monitoringMoreQuery,
   graduatedQuery,
-  fallbackQuery
+  fallbackQuery,
+  tokensMin500TxQuery,
+  trendingGainersQuery
 };
