@@ -1,285 +1,302 @@
-import { Connection } from '@solana/web3.js';
 import { colors } from '../colors.js';
 import { logToFile } from '../logger.js';
-import { errorHandler } from './error-handler.js';
+import { Connection } from '@solana/web3.js';
 
-/**
- * Optimized Connection Manager - Handles RPC connections and API endpoints
- */
 export class ConnectionManager {
   constructor() {
-    this.connections = new Map();
-    this.endpoints = new Map();
-    this.healthChecks = new Map();
-    this.currentEndpoint = null;
-    this.fallbackEndpoints = [
-      'https://api.mainnet-beta.solana.com',
-      'https://solana-api.projectserum.com',
-      'https://rpc.ankr.com/solana',
-      'https://solana.public-rpc.com'
-    ];
-    
-    this.initializeEndpoints();
+    this.connectionStatus = {
+      bitquery: { connected: false, error: null, lastCheck: 0 },
+      jupiter: { connected: false, error: null, lastCheck: 0 },
+      birdeye: { connected: false, error: null, lastCheck: 0 }
+    };
+    this.retryAttempts = 0;
+    this.maxRetries = 3;
+    this.retryDelay = 2000;
+    this.apiKey = null;
   }
 
-  /**
-   * Initialize default endpoints
-   */
-  initializeEndpoints() {
-    // Primary endpoints
-    this.endpoints.set('primary', 'https://api.mainnet-beta.solana.com');
-    this.endpoints.set('backup1', 'https://solana-api.projectserum.com');
-    this.endpoints.set('backup2', 'https://rpc.ankr.com/solana');
-    this.endpoints.set('backup3', 'https://solana.public-rpc.com');
-    
-    this.currentEndpoint = 'primary';
+  setApiKey(apiKey) {
+    this.apiKey = apiKey;
   }
 
-  /**
-   * Get optimized connection with caching
-   */
-  async getConnection(endpoint = null) {
-    const targetEndpoint = endpoint || this.endpoints.get(this.currentEndpoint);
-    
-    // Check if we have a cached connection
-    if (this.connections.has(targetEndpoint)) {
-      const connection = this.connections.get(targetEndpoint);
-      if (connection.lastUsed && Date.now() - connection.lastUsed < 60000) {
-        connection.lastUsed = Date.now();
-        return connection.connection;
-      }
-    }
-
-    // Create new connection
-    const connection = new Connection(targetEndpoint, {
-      commitment: 'confirmed',
-      confirmTransactionInitialTimeout: 60000
-    });
-
-    // Test connection health
-    const isHealthy = await this.testConnectionHealth(connection);
-    if (!isHealthy) {
-      console.log(`${colors.yellow}⚠️ Endpoint ${targetEndpoint} is unhealthy, trying fallback...${colors.reset}`);
-      return await this.getFallbackConnection();
-    }
-
-    // Cache the connection
-    this.connections.set(targetEndpoint, {
-      connection,
-      lastUsed: Date.now(),
-      healthy: true
-    });
-
-    return connection;
-  }
-
-  /**
-   * Test connection health
-   */
-  async testConnectionHealth(connection) {
+  async checkBitqueryConnection() {
     try {
-      const startTime = Date.now();
-      await connection.getSlot();
-      const responseTime = Date.now() - startTime;
+      // Check if we have a valid API key
+      if (!this.apiKey) {
+        this.connectionStatus.bitquery = {
+          connected: false,
+          error: 'No API key configured',
+          lastCheck: Date.now()
+        };
+        return false;
+      }
+
+      // Simple test query to check connection
+      const testQuery = {
+        query: `{
+          Solana {
+            DEXTrades(
+              limit: {count: 1}
+              where: {
+                Block: {Time: {since_relative: {minutes_ago: 1}}}
+                Trade: {
+                  Buy: {
+                    Currency: {MintAddress: {notIn: ["11111111111111111111111111111111"]}}
+                  }
+                }
+              }
+            ) {
+              Trade {
+                Buy {
+                  Currency {
+                    Symbol
+                    MintAddress
+                  }
+                }
+              }
+            }
+          }
+        }`,
+        variables: {}
+      };
+
+      const headers = new Headers();
+      headers.append("Content-Type", "application/json");
+      headers.append("Authorization", `Bearer ${this.apiKey}`);
+
+      const response = await fetch("https://streaming.bitquery.io/eap", {
+        method: "POST",
+        headers: headers,
+        body: JSON.stringify(testQuery),
+        redirect: "follow"
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`HTTP ${response.status}: ${errorText}`);
+      }
+
+      const result = await response.json();
       
-      // Consider connection healthy if response time is under 5 seconds
-      return responseTime < 5000;
+      if (result.errors) {
+        throw new Error(result.errors[0]?.message || 'GraphQL errors');
+      }
+
+      this.connectionStatus.bitquery = {
+        connected: true,
+        error: null,
+        lastCheck: Date.now()
+      };
+
+      return true;
+
     } catch (error) {
+      this.connectionStatus.bitquery = {
+        connected: false,
+        error: error.message,
+        lastCheck: Date.now()
+      };
+      
+      logToFile(`BitQuery connection failed: ${error.message}`, 'error');
       return false;
     }
   }
 
-  /**
-   * Get fallback connection
-   */
-  async getFallbackConnection() {
-    for (const [name, endpoint] of this.endpoints) {
-      if (name === this.currentEndpoint) continue;
-      
-      try {
-        const connection = new Connection(endpoint, {
-          commitment: 'confirmed',
-          confirmTransactionInitialTimeout: 60000
-        });
-        
-        const isHealthy = await this.testConnectionHealth(connection);
-        if (isHealthy) {
-          console.log(`${colors.green}✅ Switched to ${name} endpoint${colors.reset}`);
-          this.currentEndpoint = name;
-          
-          this.connections.set(endpoint, {
-            connection,
-            lastUsed: Date.now(),
-            healthy: true
-          });
-          
-          return connection;
+  async checkJupiterConnection() {
+    try {
+      const response = await fetch('https://price.jup.ag/v4/price?ids=SOL', {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json'
         }
-      } catch (error) {
-        console.log(`${colors.yellow}⚠️ ${name} endpoint failed: ${error.message}${colors.reset}`);
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
       }
+
+      const result = await response.json();
+      
+      if (!result.data) {
+        throw new Error('Invalid Jupiter response');
+      }
+
+      this.connectionStatus.jupiter = {
+        connected: true,
+        error: null,
+        lastCheck: Date.now()
+      };
+
+      return true;
+
+    } catch (error) {
+      this.connectionStatus.jupiter = {
+        connected: false,
+        error: error.message,
+        lastCheck: Date.now()
+      };
+      
+      logToFile(`Jupiter connection failed: ${error.message}`, 'error');
+      return false;
     }
-    
-    throw new Error('All endpoints are unavailable');
   }
 
-  /**
-   * Get current endpoint info
-   */
-  getCurrentEndpoint() {
+  async checkAllConnections() {
+    const results = await Promise.allSettled([
+      this.checkBitqueryConnection(),
+      this.checkJupiterConnection()
+    ]);
+
     return {
-      name: this.currentEndpoint,
-      url: this.endpoints.get(this.currentEndpoint),
-      healthy: this.connections.get(this.endpoints.get(this.currentEndpoint))?.healthy || false
+      bitquery: results[0].status === 'fulfilled' ? results[0].value : false,
+      jupiter: results[1].status === 'fulfilled' ? results[1].value : false
     };
   }
 
-  /**
-   * Add custom endpoint
-   */
-  addEndpoint(name, url) {
-    this.endpoints.set(name, url);
-    console.log(`${colors.green}✅ Added endpoint: ${name} -> ${url}${colors.reset}`);
-  }
+  async makeBitqueryRequest(query, retryCount = 0) {
+    try {
+      if (!this.apiKey) {
+        throw new Error('No API key configured');
+      }
 
-  /**
-   * Remove endpoint
-   */
-  removeEndpoint(name) {
-    if (this.endpoints.has(name)) {
-      this.endpoints.delete(name);
-      console.log(`${colors.yellow}⚠️ Removed endpoint: ${name}${colors.reset}`);
-    }
-  }
+      const headers = new Headers();
+      headers.append("Content-Type", "application/json");
+      headers.append("Authorization", `Bearer ${this.apiKey}`);
 
-  /**
-   * List all endpoints
-   */
-  listEndpoints() {
-    const endpoints = [];
-    for (const [name, url] of this.endpoints) {
-      const connection = this.connections.get(url);
-      endpoints.push({
-        name,
-        url,
-        healthy: connection?.healthy || false,
-        lastUsed: connection?.lastUsed || null,
-        isCurrent: name === this.currentEndpoint
+      const response = await fetch("https://streaming.bitquery.io/eap", {
+        method: "POST",
+        headers: headers,
+        body: JSON.stringify(query),
+        redirect: "follow"
       });
-    }
-    return endpoints;
-  }
 
-  /**
-   * Display endpoint status
-   */
-  displayEndpointStatus() {
-    console.log(`${colors.cyan}🌐 Endpoint Status:${colors.reset}`);
-    console.log(`${colors.white}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${colors.reset}`);
-    
-    const endpoints = this.listEndpoints();
-    for (const endpoint of endpoints) {
-      const status = endpoint.healthy ? '🟢' : '🔴';
-      const current = endpoint.isCurrent ? ' (Current)' : '';
-      const lastUsed = endpoint.lastUsed ? 
-        ` - Last used: ${new Date(endpoint.lastUsed).toLocaleTimeString()}` : '';
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`HTTP ${response.status}: ${errorText}`);
+      }
+
+      const result = await response.json();
       
-      console.log(`${status} ${colors.yellow}${endpoint.name}:${colors.reset} ${endpoint.url}${current}${lastUsed}`);
-    }
-  }
-
-  /**
-   * Cleanup old connections
-   */
-  cleanup() {
-    const now = Date.now();
-    for (const [endpoint, connection] of this.connections) {
-      if (now - connection.lastUsed > 300000) { // 5 minutes
-        this.connections.delete(endpoint);
+      if (result.errors) {
+        throw new Error(result.errors[0]?.message || 'GraphQL errors');
       }
-    }
-  }
 
-  /**
-   * Get optimized RPC endpoint
-   */
-  getRpcEndpoint() {
-    return this.endpoints.get(this.currentEndpoint);
-  }
+      // Reset retry attempts on success
+      this.retryAttempts = 0;
+      return result;
 
-  /**
-   * Test all endpoints
-   */
-  async testAllEndpoints() {
-    console.log(`${colors.cyan}🔍 Testing all endpoints...${colors.reset}`);
-    
-    const results = [];
-    for (const [name, url] of this.endpoints) {
-      try {
-        const connection = new Connection(url, { commitment: 'confirmed' });
-        const startTime = Date.now();
-        await connection.getSlot();
-        const responseTime = Date.now() - startTime;
-        
-        results.push({
-          name,
-          url,
-          healthy: true,
-          responseTime
-        });
-        
-        console.log(`${colors.green}✅ ${name}: ${responseTime}ms${colors.reset}`);
-      } catch (error) {
-        results.push({
-          name,
-          url,
-          healthy: false,
-          error: error.message
-        });
-        
-        console.log(`${colors.red}❌ ${name}: ${error.message}${colors.reset}`);
+    } catch (error) {
+      // Handle specific error types
+      if (error.message.includes('Account blocked') || error.message.includes('401')) {
+        throw new Error('API key is invalid or blocked. Please check your BitQuery API key.');
       }
+      
+      if (error.message.includes('ENOTFOUND') || error.message.includes('ECONNREFUSED')) {
+        throw new Error('Network connection failed. Please check your internet connection.');
+      }
+
+      // Retry logic for transient errors
+      if (retryCount < this.maxRetries && this.shouldRetry(error)) {
+        console.log(`${colors.yellow}⚠️ Request failed, retrying... (${retryCount + 1}/${this.maxRetries})${colors.reset}`);
+        await new Promise(resolve => setTimeout(resolve, this.retryDelay * (retryCount + 1)));
+        return this.makeBitqueryRequest(query, retryCount + 1);
+      }
+
+      throw error;
     }
-    
-    return results;
   }
 
-  /**
-   * Auto-select best endpoint
-   */
-  async selectBestEndpoint() {
-    const results = await this.testAllEndpoints();
-    const healthyEndpoints = results.filter(r => r.healthy);
-    
-    if (healthyEndpoints.length === 0) {
-      throw new Error('No healthy endpoints available');
-    }
-    
-    // Select endpoint with lowest response time
-    const bestEndpoint = healthyEndpoints.reduce((best, current) => 
-      current.responseTime < best.responseTime ? current : best
+  shouldRetry(error) {
+    // Retry on network errors, timeouts, and rate limits
+    const retryableErrors = [
+      'ENOTFOUND',
+      'ECONNREFUSED',
+      'ETIMEDOUT',
+      'ECONNRESET',
+      'rate limit',
+      'timeout',
+      'network'
+    ];
+
+    return retryableErrors.some(retryableError => 
+      error.message.toLowerCase().includes(retryableError)
     );
-    
-    this.currentEndpoint = bestEndpoint.name;
-    console.log(`${colors.green}✅ Selected best endpoint: ${bestEndpoint.name} (${bestEndpoint.responseTime}ms)${colors.reset}`);
-    
-    return bestEndpoint;
   }
 
-  /**
-   * Get connection with automatic fallback
-   */
+  getConnectionStatus() {
+    return this.connectionStatus;
+  }
+
+  isConnected(service = 'bitquery') {
+    return this.connectionStatus[service]?.connected || false;
+  }
+
+  getLastError(service = 'bitquery') {
+    return this.connectionStatus[service]?.error || null;
+  }
+
+  // Get optimized connection for RPC operations
   async getOptimizedConnection() {
     try {
-      return await this.getConnection();
+      // Use a reliable RPC endpoint for wallet operations
+      const rpcEndpoint = 'https://api.mainnet-beta.solana.com';
+      const connection = new Connection(rpcEndpoint, 'confirmed');
+      return connection;
     } catch (error) {
-      console.log(`${colors.yellow}🔄 Primary endpoint failed, trying fallbacks...${colors.reset}`);
-      return await this.getFallbackConnection();
+      console.error(`${colors.red}❌ Failed to create optimized connection: ${error.message}${colors.reset}`);
+      throw error;
+    }
+  }
+
+  // Display connection status
+  displayConnectionStatus() {
+    console.log(`\n${colors.cyan}🔗 Connection Status:${colors.reset}`);
+    
+    Object.entries(this.connectionStatus).forEach(([service, status]) => {
+      const icon = status.connected ? '✅' : '❌';
+      const color = status.connected ? colors.green : colors.red;
+      const lastCheck = status.lastCheck ? new Date(status.lastCheck).toLocaleTimeString() : 'Never';
+      
+      console.log(`${icon} ${color}${service.toUpperCase()}${colors.reset}: ${status.connected ? 'Connected' : 'Disconnected'}`);
+      if (!status.connected && status.error) {
+        console.log(`   ${colors.yellow}Error: ${status.error}${colors.reset}`);
+      }
+      console.log(`   Last check: ${lastCheck}`);
+    });
+  }
+
+  // Auto-reconnect functionality
+  async autoReconnect(service = 'bitquery') {
+    if (this.isConnected(service)) {
+      return true;
+    }
+
+    console.log(`${colors.yellow}🔄 Attempting to reconnect to ${service}...${colors.reset}`);
+    
+    try {
+      let success = false;
+      
+      if (service === 'bitquery') {
+        success = await this.checkBitqueryConnection();
+      } else if (service === 'jupiter') {
+        success = await this.checkJupiterConnection();
+      }
+
+      if (success) {
+        console.log(`${colors.green}✅ Successfully reconnected to ${service}!${colors.reset}`);
+        return true;
+      } else {
+        console.log(`${colors.red}❌ Failed to reconnect to ${service}${colors.reset}`);
+        return false;
+      }
+    } catch (error) {
+      console.log(`${colors.red}❌ Reconnection failed: ${error.message}${colors.reset}`);
+      return false;
     }
   }
 }
 
-// Create global instance
+// Export singleton instance
 export const connectionManager = new ConnectionManager();
 
 // Price Alerts Manager

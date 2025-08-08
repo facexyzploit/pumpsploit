@@ -361,3 +361,205 @@ export class PerformanceOptimizer {
 
 // Create global instance
 export const performanceOptimizer = new PerformanceOptimizer();
+
+// Performance optimization for trending tokens
+export class TrendingPerformanceOptimizer {
+  constructor() {
+    this.jupiterCache = new Map();
+    this.displayCache = new Map();
+    this.cacheDuration = 30000; // 30 seconds
+    this.parallelLimit = 3; // Max concurrent Jupiter API calls
+    this.requestQueue = [];
+    this.isProcessing = false;
+  }
+
+  // Optimized Jupiter API call with caching
+  async getJupiterDataOptimized(mintAddress) {
+    const cacheKey = `jupiter_${mintAddress}`;
+    const cached = this.jupiterCache.get(cacheKey);
+    
+    if (cached && (Date.now() - cached.timestamp) < this.cacheDuration) {
+      return cached.data;
+    }
+
+    // Add to request queue if too many concurrent requests
+    if (this.requestQueue.length >= this.parallelLimit) {
+      return null; // Skip this request to avoid overwhelming the API
+    }
+
+    try {
+      const { checkJupiterTokenRealtime } = await import('../bitquery-stream.js');
+      const response = await checkJupiterTokenRealtime(mintAddress);
+      
+      if (response.success && response.data) {
+        this.jupiterCache.set(cacheKey, {
+          data: response.data,
+          timestamp: Date.now()
+        });
+        return response.data;
+      }
+    } catch (error) {
+      // Silent fail - return null to use BitQuery data only
+    }
+    
+    return null;
+  }
+
+  // Batch process Jupiter data for multiple tokens
+  async batchProcessJupiterData(tokenMetrics) {
+    const promises = tokenMetrics.map(async (token) => {
+      const jupiterData = await this.getJupiterDataOptimized(token.mintAddress);
+      return {
+        ...token,
+        jupiterData
+      };
+    });
+
+    // Process in batches to avoid overwhelming the API
+    const results = [];
+    for (let i = 0; i < promises.length; i += this.parallelLimit) {
+      const batch = promises.slice(i, i + this.parallelLimit);
+      const batchResults = await Promise.allSettled(batch);
+      
+      batchResults.forEach((result, index) => {
+        if (result.status === 'fulfilled') {
+          results.push(result.value);
+        } else {
+          // Use token without Jupiter data
+          results.push(tokenMetrics[i + index]);
+        }
+      });
+    }
+
+    return results;
+  }
+
+  // Optimized trending token processing
+  async processTrendingTokensOptimized(recentTrades, previousTrades) {
+    // Group trades by token efficiently
+    const tokenGroups = new Map();
+    
+    // Process recent trades
+    recentTrades.forEach(trade => {
+      const mintAddress = trade.Trade?.Buy?.Currency?.MintAddress;
+      if (mintAddress) {
+        if (!tokenGroups.has(mintAddress)) {
+          tokenGroups.set(mintAddress, {
+            recent: [],
+            previous: [],
+            token: trade.Trade.Buy.Currency
+          });
+        }
+        tokenGroups.get(mintAddress).recent.push(trade);
+      }
+    });
+    
+    // Process previous trades
+    previousTrades.forEach(trade => {
+      const mintAddress = trade.Trade?.Buy?.Currency?.MintAddress;
+      if (mintAddress && tokenGroups.has(mintAddress)) {
+        tokenGroups.get(mintAddress).previous.push(trade);
+      }
+    });
+    
+    // Calculate metrics efficiently
+    const tokenMetrics = [];
+    for (const [mintAddress, data] of tokenGroups) {
+      const { recent, previous, token } = data;
+      
+      // Quick volume calculation
+      const recentVolume = recent.reduce((sum, t) => sum + (t.Trade?.Buy?.AmountInUSD || 0), 0);
+      const previousVolume = previous.reduce((sum, t) => sum + (t.Trade?.Buy?.AmountInUSD || 0), 0);
+      const volumeChange = previousVolume > 0 ? ((recentVolume - previousVolume) / previousVolume) * 100 : 0;
+      
+      // Quick price calculation
+      const recentPrices = recent.map(t => t.Trade?.Buy?.PriceInUSD || 0).filter(p => p > 0);
+      const previousPrices = previous.map(t => t.Trade?.Buy?.PriceInUSD || 0).filter(p => p > 0);
+      
+      const currentPrice = recentPrices[0] || 0;
+      const oldPrice = previousPrices[0] || currentPrice;
+      const priceChange = oldPrice > 0 ? ((currentPrice - oldPrice) / oldPrice) * 100 : 0;
+      
+      // Quick frequency calculation
+      const recentFreq = recent.length / 3; // trades per minute in last 3 min
+      const previousFreq = previous.length / 3; // trades per minute in previous 3 min
+      const freqChange = previousFreq > 0 ? ((recentFreq - previousFreq) / previousFreq) * 100 : 0;
+      
+      tokenMetrics.push({
+        mintAddress,
+        token,
+        recentTrade: recent[0],
+        metrics: {
+          currentPrice,
+          priceChange,
+          recentVolume,
+          volumeChange,
+          tradeFreq: recentFreq,
+          freqChange,
+          momentum: (volumeChange * 0.4) + (priceChange * 0.4) + (freqChange * 0.2)
+        }
+      });
+    }
+    
+    // Sort by momentum for best performance
+    tokenMetrics.sort((a, b) => b.metrics.momentum - a.metrics.momentum);
+    
+    // Take top 10 for display
+    const topTokens = tokenMetrics.slice(0, 10);
+    
+    // Batch process Jupiter data for top tokens
+    const processedTokens = await this.batchProcessJupiterData(topTokens);
+    
+    // Add Jupiter data to metrics
+    return processedTokens.map(token => ({
+      ...token,
+      metrics: {
+        ...token.metrics,
+        jupiter: token.jupiterData || null
+      }
+    }));
+  }
+
+  // Clear old cache entries
+  cleanupCache() {
+    const now = Date.now();
+    
+    // Clean Jupiter cache
+    for (const [key, value] of this.jupiterCache.entries()) {
+      if (now - value.timestamp > this.cacheDuration) {
+        this.jupiterCache.delete(key);
+      }
+    }
+    
+    // Clean display cache
+    for (const [key, value] of this.displayCache.entries()) {
+      if (now - value.timestamp > this.cacheDuration) {
+        this.displayCache.delete(key);
+      }
+    }
+  }
+
+  // Get cached display or create new one
+  getCachedDisplay(index, trendingData) {
+    const cacheKey = `display_${index}_${trendingData.length}`;
+    const cached = this.displayCache.get(cacheKey);
+    
+    if (cached && (Date.now() - cached.timestamp) < this.cacheDuration) {
+      return cached.display;
+    }
+    
+    return null;
+  }
+
+  // Cache display
+  cacheDisplay(index, trendingData, display) {
+    const cacheKey = `display_${index}_${trendingData.length}`;
+    this.displayCache.set(cacheKey, {
+      display,
+      timestamp: Date.now()
+    });
+  }
+}
+
+// Export singleton instance
+export const trendingOptimizer = new TrendingPerformanceOptimizer();

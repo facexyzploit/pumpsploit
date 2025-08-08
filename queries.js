@@ -452,19 +452,19 @@ const tokensMin500TxQuery = {
   variables: { }
 };
 
-// Trending and Gainers Query - Last 5 minutes
+// Optimized Trending and Gainers Query - Last 3 minutes for faster response
 const trendingGainersQuery = {
   query: `{
     Solana {
-      # Get trades from last 5 minutes
+      # Get trades from last 3 minutes (reduced from 5 for speed)
       recentTrades: DEXTrades(
-        limit: {count: 30}
+        limit: {count: 20}
         orderBy: {descending: Block_Time}
         where: {
-          Block: {Time: {since_relative: {minutes_ago: 5}}}
+          Block: {Time: {since_relative: {minutes_ago: 3}}}
           Trade: {
             Dex: {
-              ProtocolFamily: { in: ["Raydium", "Orca", "Jupiter", "Pumpfun", "Lanswap"] }
+              ProtocolFamily: { in: ["Raydium", "Orca", "Jupiter", "Pumpfun"] }
             },
             Buy: {
               Currency: {MintAddress: {notIn: ["11111111111111111111111111111111"]}},
@@ -482,7 +482,6 @@ const trendingGainersQuery = {
               MintAddress
               Decimals
               Fungible
-              Uri
             }
             Price
             PriceInUSD
@@ -501,9 +500,6 @@ const trendingGainersQuery = {
             ProtocolName
             ProtocolFamily
           }
-          Market {
-            MarketAddress
-          }
         }
         Block {
           Time
@@ -513,20 +509,20 @@ const trendingGainersQuery = {
         }
       }
       
-      # Get previous 5 minutes for price comparison
+      # Get previous 3 minutes for price comparison (reduced scope)
       previousTrades: DEXTrades(
-        limit: {count: 1000}
+        limit: {count: 30}
         orderBy: {descending: Block_Time}
         where: {
           Block: {
             Time: {
-              since_relative: {minutes_ago: 10},
-              till_relative: {minutes_ago: 5}
+              since_relative: {minutes_ago: 6},
+              till_relative: {minutes_ago: 3}
             }
           },
           Trade: {
             Dex: {
-              ProtocolFamily: { in: ["Raydium", "Orca", "Jupiter", "Pumpfun", "Lanswap"] }
+              ProtocolFamily: { in: ["Raydium", "Orca", "Jupiter", "Pumpfun"] }
             },
             Buy: {
               Currency: {MintAddress: {notIn: ["11111111111111111111111111111111"]}},

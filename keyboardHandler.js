@@ -144,7 +144,6 @@ class KeyboardHandler {
   async handleNextToken() {
     // Handle trending mode differently
     if (this.state.getMode() === 'trending') {
-      console.log(`${colors.cyan}🔄 Navigating to next trending token...${colors.reset}`);
       if (this.state.hasNextTrendingToken()) {
         this.state.nextTrendingToken();
         const trendingData = this.state.getTrendingData();
@@ -156,9 +155,6 @@ class KeyboardHandler {
         console.log(`${colors.yellow}⚠️ No more trending tokens to display${colors.reset}`);
       }
     } else {
-      console.log(`${colors.cyan}🔄 Navigating to next token...${colors.reset}`);
-      console.log(`${colors.yellow}Current index: ${this.state.currentTokenIndex}, Total trades: ${this.state.trades.length}${colors.reset}`);
-      
       if (this.state.currentTokenIndex < this.state.trades.length - 1) {
         await this.state.displayTrade(this.state.currentTokenIndex + 1);
       } else {
@@ -173,7 +169,6 @@ class KeyboardHandler {
   async handlePreviousToken() {
     // Handle trending mode differently
     if (this.state.getMode() === 'trending') {
-      console.log(`${colors.cyan}🔄 Navigating to previous trending token...${colors.reset}`);
       if (this.state.hasPreviousTrendingToken()) {
         this.state.previousTrendingToken();
         const trendingData = this.state.getTrendingData();
